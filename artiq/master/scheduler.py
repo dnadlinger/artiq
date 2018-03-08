@@ -1,6 +1,6 @@
 import asyncio
 import logging
-from enum import Enum
+from enum import Enum, unique
 from time import time
 
 from artiq.master.worker import Worker, log_worker_exception
@@ -11,6 +11,7 @@ from artiq.protocols.sync_struct import Notifier
 logger = logging.getLogger(__name__)
 
 
+@unique
 class RunStatus(Enum):
     pending = 0
     flushing = 1
