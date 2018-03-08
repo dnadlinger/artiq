@@ -9,6 +9,7 @@ objects. Its main features are:
 * Those data types are accurately reconstructed (unlike JSON where e.g. tuples
   become lists, and dictionary keys are turned into strings).
 * Supports Numpy arrays.
+* enum.Enum instances are serialised as their values.
 
 The main rationale for this new custom serializer (instead of using JSON) is
 that JSON does not support Numpy and more generally cannot be extended with
@@ -19,6 +20,7 @@ function call syntax to express special data types.
 
 from operator import itemgetter
 import base64
+import enum
 from fractions import Fraction
 from collections import OrderedDict
 import os
@@ -164,6 +166,9 @@ class _Encoder:
         return r
 
     def encode(self, x):
+        if isinstance(x, enum.Enum):
+            x = x.value
+
         ty = _encode_map.get(type(x), None)
         if ty is None:
             raise TypeError("`{!r}` ({}) is not PYON serializable"
