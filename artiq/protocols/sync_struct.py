@@ -268,8 +268,14 @@ class Publisher(AsyncioServer):
         AsyncioServer.__init__(self)
 
         self.notifiers = dict()
-        self._recipients = dict()
+
+        # Maps from notifier id()s to names.
         self._notifier_names = dict()
+
+        # Maps from notifier names to lists of connected subscribers. Each entry
+        # is an asyncio.Queue into which the mods to be published (or None to
+        # indicate removal of the notifier) are pushed.
+        self._recipients = dict()
 
         for k, v in notifiers.items():
             self.add_notifier(k, v)
@@ -279,11 +285,25 @@ class Publisher(AsyncioServer):
 
         The name must not be in use yet.
         """
+
         assert name not in self.notifiers
         self.notifiers[name] = notifier
         self._recipients[name] = set()
         self._notifier_names[id(notifier)] = name
         notifier.publish = partial(self.publish, notifier)
+
+    def remove_notifier(self, name):
+        """Remove the notifier with the given ``name``."""
+
+        notifier = self.notifiers[name]
+        notifier.publish = None
+
+        for recipient in self._recipients[name]:
+            recipient.put_nowait(None)
+
+        del self._notifier_names[id(notifier)]
+        del self._recipients[name]
+        del self.notifiers[name]
 
     async def _handle_connection_cr(self, reader, writer):
         try:
@@ -310,11 +330,17 @@ class Publisher(AsyncioServer):
             try:
                 while True:
                     line = await queue.get()
+                    if line is None:
+                        # Notifier removed, close connection.
+                        return
                     writer.write(line)
                     # raise exception on connection error
                     await writer.drain()
             finally:
-                self._recipients[notifier_name].remove(queue)
+                # If the notifier is still present, deregister this queue.
+                recipients = self._recipients.get(notifier_name, None)
+                if recipients:
+                    recipients.remove(queue)
         except (ConnectionResetError, ConnectionAbortedError, BrokenPipeError):
             # subscribers disconnecting are a normal occurence
             pass
