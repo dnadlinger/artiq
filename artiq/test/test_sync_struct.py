@@ -37,6 +37,11 @@ class SyncStructCase(unittest.TestCase):
         self.received_dict = init
         return init
 
+    def init_test_dict2(self, init):
+        self.received_dict2 = init
+        self.receiving_done2.set()
+        return init
+
     def notify(self, mod):
         if ((mod["action"] == "init" and "finished" in mod["struct"])
                 or (mod["action"] == "setitem" and mod["key"] == "finished")):
@@ -47,6 +52,8 @@ class SyncStructCase(unittest.TestCase):
         asyncio.set_event_loop(self.loop)
 
     async def _do_test_recv(self):
+        # Test sending/receiving changes after a client has already connected.
+
         self.receiving_done = asyncio.Event()
 
         test_dict = sync_struct.Notifier(dict())
@@ -60,10 +67,25 @@ class SyncStructCase(unittest.TestCase):
         write_test_data(test_dict)
         await self.receiving_done.wait()
 
+        self.assertEqual(self.received_dict, test_dict.raw_view)
+
+
+        # Test adding a notifier and initialising a client from existing data.
+
+        self.receiving_done2 = asyncio.Event()
+
+        publisher.add_notifier("test2", test_dict)
+        subscriber2 = sync_struct.Subscriber("test", self.init_test_dict2,
+                                             None)
+        await subscriber2.connect(test_address, test_port)
+        await self.receiving_done2.wait()
+
+        self.assertEqual(self.received_dict2, test_dict.raw_view)
+
+        await subscriber2.close()
         await subscriber.close()
         await publisher.stop()
 
-        self.assertEqual(self.received_dict, test_dict.raw_view)
 
     def test_recv(self):
         self.loop.run_until_complete(self._do_test_recv())

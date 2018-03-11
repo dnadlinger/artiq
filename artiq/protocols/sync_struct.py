@@ -70,7 +70,6 @@ _mod_appliers = {
     ModAction.delitem: lambda t, m: t.__delitem__(m["key"])
 }
 
-
 def process_mod(target, mod):
     """Apply a *mod* to the target, mutating it."""
     for key in mod["path"]:
@@ -267,12 +266,24 @@ class Publisher(AsyncioServer):
     """
     def __init__(self, notifiers):
         AsyncioServer.__init__(self)
-        self.notifiers = notifiers
-        self._recipients = {k: set() for k in notifiers.keys()}
-        self._notifier_names = {id(v): k for k, v in notifiers.items()}
 
-        for notifier in notifiers.values():
-            notifier.publish = partial(self.publish, notifier)
+        self.notifiers = dict()
+        self._recipients = dict()
+        self._notifier_names = dict()
+
+        for k, v in notifiers.items():
+            self.add_notifier(k, v)
+
+    def add_notifier(self, name, notifier):
+        """Add a ``notifier`` to be published under the given ``name``.
+
+        The name must not be in use yet.
+        """
+        assert name not in self.notifiers
+        self.notifiers[name] = notifier
+        self._recipients[name] = set()
+        self._notifier_names[id(notifier)] = name
+        notifier.publish = partial(self.publish, notifier)
 
     async def _handle_connection_cr(self, reader, writer):
         try:
