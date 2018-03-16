@@ -13,7 +13,7 @@ from artiq.protocols.sync_struct import Publisher
 from artiq.protocols.logging import Server as LoggingServer
 from artiq.protocols.broadcast import Broadcaster
 from artiq.master.log import log_args, init_log
-from artiq.master.databases import DeviceDB, DatasetDB
+from artiq.master.databases import DeviceDB, DatasetDB, DatasetNamespaces
 from artiq.master.scheduler import Scheduler
 from artiq.master.rid_counter import RIDCounter
 from artiq.master.experiments import (FilesystemBackend, GitBackend,
@@ -93,6 +93,10 @@ def main():
     dataset_db = DatasetDB(args.dataset_db)
     dataset_db.start()
     atexit_register_coroutine(dataset_db.stop)
+
+    dataset_namespaces = DatasetNamespaces(dataset_db)
+    atexit_register_coroutine(dataset_namespaces.stop)
+
     worker_handlers = dict()
 
     if args.git:
@@ -102,7 +106,8 @@ def main():
     experiment_db = ExperimentDB(repo_backend, worker_handlers)
     atexit.register(experiment_db.close)
 
-    scheduler = Scheduler(RIDCounter(), worker_handlers, experiment_db)
+    scheduler = Scheduler(RIDCounter(), worker_handlers, experiment_db,
+                          dataset_namespaces)
     scheduler.start()
     atexit_register_coroutine(scheduler.stop)
 

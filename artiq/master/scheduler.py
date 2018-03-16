@@ -2,10 +2,11 @@ import asyncio
 import logging
 from enum import Enum, unique
 from time import time
+from functools import partial
 
 from artiq.master.worker import Worker, log_worker_exception
 from artiq.tools import asyncio_wait_or_cancel, TaskObject, Condition
-from artiq.protocols.sync_struct import Notifier
+from artiq.protocols.sync_struct import Notifier, process_mod
 
 
 logger = logging.getLogger(__name__)
@@ -57,7 +58,17 @@ class Run:
         self.due_date = due_date
         self.flush = flush
 
-        self.worker = Worker(pool.worker_handlers)
+        # Update datasets through rid namespace.
+        handlers = pool.worker_handlers
+        namespaces = pool.dataset_namespaces
+        if namespaces:
+            namespaces.init_rid(rid)
+            handlers = {
+                **handlers,
+                "update_dataset": partial(namespaces.update_rid_namespace, rid)
+            }
+        self.worker = Worker(handlers)
+
         self.termination_requested = False
 
         self._status = RunStatus.pending
@@ -118,7 +129,8 @@ class Run:
 
 
 class RunPool:
-    def __init__(self, ridc, worker_handlers, notifier, experiment_db):
+    def __init__(self, ridc, worker_handlers, notifier, experiment_db,
+                 dataset_namespaces):
         self.runs = dict()
         self.state_changed = Condition()
 
@@ -126,6 +138,7 @@ class RunPool:
         self.worker_handlers = worker_handlers
         self.notifier = notifier
         self.experiment_db = experiment_db
+        self.dataset_namespaces = dataset_namespaces
 
     def submit(self, expid, priority, due_date, flush, pipeline_name):
         # mutates expid to insert head repository revision if None.
@@ -320,8 +333,10 @@ class AnalyzeStage(TaskObject):
 
 
 class Pipeline:
-    def __init__(self, ridc, deleter, worker_handlers, notifier, experiment_db):
-        self.pool = RunPool(ridc, worker_handlers, notifier, experiment_db)
+    def __init__(self, ridc, deleter, worker_handlers, notifier, experiment_db,
+                 dataset_namespaces):
+        self.pool = RunPool(ridc, worker_handlers, notifier, experiment_db,
+                            dataset_namespaces)
         self._prepare = PrepareStage(self.pool, deleter.delete)
         self._run = RunStage(self.pool, deleter.delete)
         self._analyze = AnalyzeStage(self.pool, deleter.delete)
@@ -339,8 +354,9 @@ class Pipeline:
 
 
 class Deleter(TaskObject):
-    def __init__(self, pipelines):
+    def __init__(self, pipelines, dataset_namespaces):
         self._pipelines = pipelines
+        self._dataset_namespaces = dataset_namespaces
         self._queue = asyncio.Queue()
 
     def delete(self, rid):
@@ -361,6 +377,8 @@ class Deleter(TaskObject):
                 await pipeline.pool.delete(rid)
                 logger.debug("deletion of RID %d completed", rid)
                 break
+        if self._dataset_namespaces:
+            self._dataset_namespaces.finish_rid(rid)
 
     async def _gc_pipelines(self):
         pipeline_names = list(self._pipelines.keys())
@@ -381,16 +399,17 @@ class Deleter(TaskObject):
 
 
 class Scheduler:
-    def __init__(self, ridc, worker_handlers, experiment_db):
+    def __init__(self, ridc, worker_handlers, experiment_db, dataset_namespaces):
         self.notifier = Notifier(dict())
 
         self._pipelines = dict()
         self._worker_handlers = worker_handlers
         self._experiment_db = experiment_db
+        self._dataset_namespaces = dataset_namespaces
         self._terminated = False
 
         self._ridc = ridc
-        self._deleter = Deleter(self._pipelines)
+        self._deleter = Deleter(self._pipelines, dataset_namespaces)
 
     def start(self):
         self._deleter.start()
@@ -421,7 +440,7 @@ class Scheduler:
             logger.debug("creating pipeline '%s'", pipeline_name)
             pipeline = Pipeline(self._ridc, self._deleter,
                                 self._worker_handlers, self.notifier,
-                                self._experiment_db)
+                                self._experiment_db, self._dataset_namespaces)
             self._pipelines[pipeline_name] = pipeline
             pipeline.start()
         return pipeline.pool.submit(expid, priority, due_date, flush, pipeline_name)

@@ -83,7 +83,7 @@ class SchedulerCase(unittest.TestCase):
 
     def test_steps(self):
         loop = self.loop
-        scheduler = Scheduler(_RIDCounter(0), dict(), None)
+        scheduler = Scheduler(_RIDCounter(0), dict(), None, None)
         expid = _get_expid("EmptyExperiment")
 
         expect = _get_basic_steps(1, expid)
@@ -131,7 +131,7 @@ class SchedulerCase(unittest.TestCase):
         handlers = {
             "update_dataset": check_termination
         }
-        scheduler = Scheduler(_RIDCounter(0), handlers, None)
+        scheduler = Scheduler(_RIDCounter(0), handlers, None, None)
 
         expid_bg = _get_expid("BackgroundExperiment")
         expid = _get_expid("EmptyExperiment")
@@ -187,7 +187,7 @@ class SchedulerCase(unittest.TestCase):
 
     def test_flush(self):
         loop = self.loop
-        scheduler = Scheduler(_RIDCounter(0), dict(), None)
+        scheduler = Scheduler(_RIDCounter(0), dict(), None, None)
         expid = _get_expid("EmptyExperiment")
 
         expect = _get_basic_steps(1, expid, 1, True)
