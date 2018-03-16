@@ -3,6 +3,7 @@
 import argparse
 import asyncio
 import atexit
+import importlib
 import os
 import logging
 
@@ -39,6 +40,9 @@ def get_argparser():
         help="database file for local GUI settings, "
              "by default in {} and dependant on master hostname".format(
                                                         get_user_config_dir()))
+    parser.add_argument(
+        "-p", "--load-plugin", dest="plugin_modules", action="append",
+        help="Python module to load on startup")
     verbosity_args(parser)
     return parser
 
@@ -90,6 +94,10 @@ def main():
     # initialize application
     args = get_argparser().parse_args()
     widget_log_handler = log.init_log(args, "dashboard")
+
+    if args.plugin_modules:
+        for mod in args.plugin_modules:
+            importlib.import_module(mod)
 
     if args.db_file is None:
         args.db_file = os.path.join(get_user_config_dir(),
