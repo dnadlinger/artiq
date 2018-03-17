@@ -162,7 +162,7 @@ class _ArgumentEditor(QtWidgets.QTreeWidget):
 
     async def _recompute_argument(self, name):
         try:
-            arginfo = await self.manager.compute_arginfo(self.expurl)
+            arginfo = await self.manager.examine_arginfo(self.expurl)
         except:
             logger.error("Could not recompute argument '%s' of '%s'",
                          name, self.expurl, exc_info=True)
@@ -386,7 +386,7 @@ class _ExperimentDock(QtWidgets.QMdiSubWindow):
 
     async def _recompute_arguments_task(self, overrides=dict()):
         try:
-            arginfo = await self.manager.compute_arginfo(self.expurl)
+            arginfo = await self.manager.examine_arginfo(self.expurl)
         except:
             logger.error("Could not recompute arguments of '%s'",
                          self.expurl, exc_info=True)
@@ -640,7 +640,7 @@ class ExperimentManager:
                 rids.append(rid)
         asyncio.ensure_future(self._request_term_multiple(rids))
 
-    async def compute_arginfo(self, expurl):
+    async def examine_arginfo(self, expurl):
         file, class_name, use_repository = self.resolve_expurl(expurl)
         if use_repository:
             revision = self.get_submission_options(expurl)["repo_rev"]
