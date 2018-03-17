@@ -294,8 +294,9 @@ class Worker:
         await self._create_process(logging.WARNING)
         r = dict()
 
-        def register(class_name, name, arginfo):
-            r[class_name] = {"name": name, "arginfo": arginfo}
+        def register(class_name, name, arginfo, argument_ui):
+            r[class_name] = {"name": name, "arginfo": arginfo,
+                             "argument_ui": argument_ui}
         self.register_experiment = register
         await self._worker_action({"action": "examine", "file": file},
                                   timeout)

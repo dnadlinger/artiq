@@ -29,7 +29,6 @@ class _RepoScanner:
             raise
         for class_name, class_desc in description.items():
             name = class_desc["name"]
-            arginfo = class_desc["arginfo"]
             if "/" in name:
                 logger.warning("Character '/' is not allowed in experiment "
                                "name (%s)", name)
@@ -46,7 +45,8 @@ class _RepoScanner:
             entry = {
                 "file": filename,
                 "class_name": class_name,
-                "arginfo": arginfo
+                "arginfo": class_desc["arginfo"],
+                "argument_ui": class_desc["argument_ui"]
             }
             entry_dict[name] = entry
 

@@ -162,7 +162,7 @@ class _ArgumentEditor(QtWidgets.QTreeWidget):
 
     async def _recompute_argument(self, name):
         try:
-            arginfo = await self.manager.examine_arginfo(self.expurl)
+            arginfo, _ = await self.manager.examine_arginfo(self.expurl)
         except:
             logger.error("Could not recompute argument '%s' of '%s'",
                          name, self.expurl, exc_info=True)
@@ -239,7 +239,8 @@ class _ExperimentDock(QtWidgets.QMdiSubWindow):
         self.manager = manager
         self.expurl = expurl
 
-        self.argeditor = _ArgumentEditor(self.manager, self, self.expurl)
+        editor_class = self.manager.get_argument_editor_class(expurl)
+        self.argeditor = editor_class(self.manager, self, self.expurl)
         self.layout.addWidget(self.argeditor, 0, 0, 1, 5)
         self.layout.setRowStretch(0, 1)
 
@@ -386,7 +387,7 @@ class _ExperimentDock(QtWidgets.QMdiSubWindow):
 
     async def _recompute_arguments_task(self, overrides=dict()):
         try:
-            arginfo = await self.manager.examine_arginfo(self.expurl)
+            arginfo, ui_name = await self.manager.examine_arginfo(self.expurl)
         except:
             logger.error("Could not recompute arguments of '%s'",
                          self.expurl, exc_info=True)
@@ -398,12 +399,13 @@ class _ExperimentDock(QtWidgets.QMdiSubWindow):
                 arginfo[k][0]["default"].insert(0, v)
             else:
                 arginfo[k][0]["default"] = v
-        self.manager.initialize_submission_arguments(self.expurl, arginfo)
+        self.manager.initialize_submission_arguments(self.expurl, arginfo, ui_name)
 
         argeditor_state = self.argeditor.save_state()
         self.argeditor.deleteLater()
 
-        self.argeditor = _ArgumentEditor(self.manager, self, self.expurl)
+        editor_class = self.manager.get_argument_editor_class(self.expurl)
+        self.argeditor = editor_class(self.manager, self, self.expurl)
         self.argeditor.restore_state(argeditor_state)
         self.layout.addWidget(self.argeditor, 0, 0, 1, 5)
 
@@ -462,6 +464,10 @@ class _ExperimentDock(QtWidgets.QMdiSubWindow):
 
 
 class ExperimentManager:
+    #: Registry for custom argument editor classes, indexed by the experiment
+    #: argument_ui key string.
+    argument_ui_classes = dict()
+
     def __init__(self, main_window,
                  explist_sub, schedule_sub,
                  schedule_ctl, experiment_db_ctl):
@@ -473,6 +479,7 @@ class ExperimentManager:
         self.submission_scheduling = dict()
         self.submission_options = dict()
         self.submission_arguments = dict()
+        self.argument_ui_names = dict()
 
         self.explist = dict()
         explist_sub.add_setmodel_callback(self.set_explist_model)
@@ -496,6 +503,15 @@ class ExperimentManager:
             return file, class_name, False
         else:
             raise ValueError("Malformed experiment URL")
+
+    def get_argument_editor_class(self, expurl):
+        ui_name = self.argument_ui_names.get(expurl, None)
+        if ui_name:
+            result = self.argument_ui_classes.get(ui_name, None)
+            if result:
+                return result
+            logger.warning("Ignoring unknown argument UI '%s'", ui_name)
+        return _ArgumentEditor
 
     def get_submission_scheduling(self, expurl):
         if expurl in self.submission_scheduling:
@@ -524,7 +540,7 @@ class ExperimentManager:
             self.submission_options[expurl] = options
             return options
 
-    def initialize_submission_arguments(self, expurl, arginfo):
+    def initialize_submission_arguments(self, expurl, arginfo, ui_name):
         arguments = OrderedDict()
         for name, (procdesc, group, tooltip) in arginfo.items():
             state = procdesc_to_entry(procdesc).default_state(procdesc)
@@ -535,6 +551,7 @@ class ExperimentManager:
                 "state": state,  # mutated by entries
             }
         self.submission_arguments[expurl] = arguments
+        self.argument_ui_names[expurl] = ui_name
         return arguments
 
     def get_submission_arguments(self, expurl):
@@ -544,9 +561,9 @@ class ExperimentManager:
             if expurl[:5] != "repo:":
                 raise ValueError("Submission arguments must be preinitialized "
                                  "when not using repository")
-            arginfo = self.explist[expurl[5:]]["arginfo"]
-            arguments = self.initialize_submission_arguments(expurl, arginfo)
-            return arguments
+            class_desc = self.explist[expurl[5:]]
+            return self.initialize_submission_arguments(expurl,
+                class_desc["arginfo"], class_desc.get("argument_ui", None))
 
     def open_experiment(self, expurl):
         if expurl in self.open_experiments:
@@ -648,13 +665,15 @@ class ExperimentManager:
             revision = None
         description = await self.experiment_db_ctl.examine(
             file, use_repository, revision)
-        return description[class_name]["arginfo"]
+        class_desc = description[class_name]
+        return class_desc["arginfo"], class_desc.get("argument_ui", None)
 
     async def open_file(self, file):
         description = await self.experiment_db_ctl.examine(file, False)
         for class_name, class_desc in description.items():
             expurl = "file:{}@{}".format(class_name, file)
-            self.initialize_submission_arguments(expurl, class_desc["arginfo"])
+            self.initialize_submission_arguments(expurl, class_desc["arginfo"],
+                class_desc.get("argument_ui", None))
             if expurl in self.open_experiments:
                 self.open_experiments[expurl].close()
             self.open_experiment(expurl)
@@ -667,6 +686,7 @@ class ExperimentManager:
             "options": self.submission_options,
             "arguments": self.submission_arguments,
             "docks": self.dock_states,
+            "argument_uis": self.argument_ui_names,
             "open_docks": set(self.open_experiments.keys())
         }
 
@@ -677,5 +697,6 @@ class ExperimentManager:
         self.submission_scheduling = state["scheduling"]
         self.submission_options = state["options"]
         self.submission_arguments = state["arguments"]
+        self.argument_ui_names = state["argument_uis"]
         for expurl in state["open_docks"]:
             self.open_experiment(expurl)

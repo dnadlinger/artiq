@@ -173,12 +173,15 @@ def examine(device_mgr, dataset_mgr, file):
                     name = exp_class.__doc__.splitlines()[0].strip()
                     if name[-1] == ".":
                         name = name[:-1]
+                argument_ui = None
+                if hasattr(exp_class, "argument_ui"):
+                    argument_ui = exp_class.argument_ui
                 argument_mgr = TraceArgumentManager()
                 exp_class((device_mgr, dataset_mgr, argument_mgr))
                 arginfo = OrderedDict(
                     (k, (proc.describe(), group, tooltip))
                     for k, (proc, group, tooltip) in argument_mgr.requested_args.items())
-                register_experiment(class_name, name, arginfo)
+                register_experiment(class_name, name, arginfo, argument_ui)
     finally:
         new_keys = set(sys.modules.keys())
         for key in new_keys - previous_keys:
