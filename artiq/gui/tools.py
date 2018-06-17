@@ -42,6 +42,10 @@ class LayoutWidget(QtWidgets.QWidget):
     def __init__(self, parent=None):
         QtWidgets.QWidget.__init__(self, parent)
         self.layout = QtWidgets.QGridLayout()
+
+        # Reduce amount of whitespace.
+        self.layout.setContentsMargins(3, 3, 3, 3)
+
         self.setLayout(self.layout)
 
     def addWidget(self, item, row=0, col=0, rowspan=1, colspan=1):
