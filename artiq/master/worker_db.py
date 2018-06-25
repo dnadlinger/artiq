@@ -154,6 +154,21 @@ class DatasetManager:
                 index = slice(*index)
         setitem(target, index, value)
 
+    def append_to(self, key, value):
+        target = None
+        if key in self.local:
+            target = self.local[key]
+        if key in self._broadcaster.raw_view:
+            if target is not None:
+                assert target is self._broadcaster.raw_view[key][1]
+            target = self._broadcaster[key][1]
+
+        if target is None:
+            self.set(key, [value], broadcast=True)
+            return
+
+        target.append(value)
+
     def get(self, key, archive=False):
         if key in self.local:
             return self.local[key]

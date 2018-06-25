@@ -315,6 +315,10 @@ class HasEnvironment:
         as ``slice(*sub_tuple)`` (multi-dimensional slicing)."""
         self.__dataset_mgr.mutate(key, index, value)
 
+    @rpc(flags={"async"})
+    def append_to_dataset(self, key, value):
+        self.__dataset_mgr.append_to(key, value)
+
     def get_dataset(self, key, default=NoDefault, archive=True):
         """Returns the contents of a dataset.
 
