@@ -169,8 +169,15 @@ class DatasetManager:
     def write_hdf5(self, f):
         datasets_group = f.create_group("datasets")
         for k, v in self.local.items():
-            datasets_group[k] = v
+            _write(datasets_group, k, v)
 
         archive_group = f.create_group("archive")
         for k, v in self.archive.items():
-            archive_group[k] = v
+            _write(archive_group, k, v)
+
+def _write(group, k, v):
+    # Give helpful error message when the user e.g. puts a Python list() into a dataset.
+    try:
+        group[k] = v
+    except TypeError as e:
+        raise TypeError("Error writing dataset '{}' of type '{}': {}".format(k, type(v), e))
