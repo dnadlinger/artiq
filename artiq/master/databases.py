@@ -112,9 +112,9 @@ class DatasetNamespaces:
         self._publish_rid(rid)
 
     def update_rid_namespace(self, rid, mod):
-         process_mod(self._rid_notifiers[rid], mod)
-         # Forward to global namespace.
-         self._dataset_db.update(mod)
+        process_mod(self._rid_notifiers[rid], mod)
+        # Forward to global namespace as well.
+        self._dataset_db.update(mod)
 
     def finish_rid(self, rid):
         if rid not in self._rid_notifiers:
@@ -129,4 +129,4 @@ class DatasetNamespaces:
 
     def _publish_rid(self, rid):
         if self._publisher:
-            self._publisher.add_notifier(_rid_namespace_name(rid), notifier)
+            self._publisher.add_notifier(_rid_namespace_name(rid), self._rid_notifiers[rid])

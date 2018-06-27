@@ -145,6 +145,7 @@ def main():
         "explist": experiment_db.explist,
         "explist_status": experiment_db.status
     })
+    dataset_namespaces.set_publisher(server_notify)
     loop.run_until_complete(server_notify.start(
         bind, args.port_notify))
     atexit_register_coroutine(server_notify.stop)
