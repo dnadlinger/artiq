@@ -482,7 +482,7 @@ class AppletsDock(QtWidgets.QDockWidget):
             name = "untitled " + str(i)
         return name
 
-    def new(self, uid=None, name=None, spec=None, parent=None):
+    def new(self, uid=None, name=None, spec=None, parent=None, is_transient=False):
         if uid is None:
             uid = next(i for i in count() if i not in self.applet_uids)
         if spec is None:
@@ -504,6 +504,7 @@ class AppletsDock(QtWidgets.QDockWidget):
         item.applet_uid = uid
         item.applet_dock = None
         item.applet_geometry = None
+        item.is_transient = is_transient
         item.setIcon(0, QtWidgets.QApplication.style().standardIcon(
             QtWidgets.QStyle.SP_ComputerIcon))
         self.set_spec(item, spec)
@@ -610,7 +611,8 @@ class AppletsDock(QtWidgets.QDockWidget):
                 geometry = cwi.applet_geometry
                 if geometry is not None:
                     geometry = bytes(geometry)
-                state.append(("applet", uid, enabled, name, spec, geometry))
+                is_transient = cwi.is_transient
+                state.append(("applet", uid, enabled, name, spec, geometry, is_transient))
             elif cwi.ty == "group":
                 name = cwi.text(0)
                 attr = cwi.text(1)
@@ -627,15 +629,15 @@ class AppletsDock(QtWidgets.QDockWidget):
     def restore_state_item(self, state, parent):
         for wis in state:
             if wis[0] == "applet":
-                _, uid, enabled, name, spec, geometry = wis
+                _, uid, enabled, name, spec, geometry, is_transient = wis
                 if spec["ty"] not in {"command", "code"}:
                     raise ValueError("Invalid applet spec type: "
                                      + str(spec["ty"]))
-                item = self.new(uid, name, spec, parent=parent)
+                item = self.new(uid, name, spec, parent=parent, is_transient=is_transient)
                 if geometry is not None:
                     geometry = QtCore.QByteArray(geometry)
                     item.applet_geometry = geometry
-                if enabled:
+                if enabled and not is_transient:
                     item.setCheckState(0, QtCore.Qt.Checked)
             elif wis[0] == "group":
                 _, name, attr, expanded, state_child = wis

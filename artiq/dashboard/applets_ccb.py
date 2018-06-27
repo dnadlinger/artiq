@@ -141,7 +141,7 @@ class AppletsCCBDock(applets.AppletsDock):
                 break
         return parent, applet
 
-    def ccb_create_applet(self, name, command, group=None, code=None):
+    def ccb_create_applet(self, name, command, group=None, code=None, is_transient=False):
         """Requests the creation of a new applet.
 
         An applet is identified by its name and an optional list of groups that
@@ -181,7 +181,7 @@ class AppletsCCBDock(applets.AppletsDock):
         else:
             spec = {"ty": "code", "code": code, "command": command}
         if applet is None:
-            applet = self.new(name=name, spec=spec, parent=parent)
+            applet = self.new(name=name, spec=spec, parent=parent, is_transient=is_transient)
         else:
             self.set_spec(applet, spec)
         if ccbp == "enable":
