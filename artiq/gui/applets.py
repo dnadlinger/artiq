@@ -417,6 +417,11 @@ class AppletsDock(QtWidgets.QDockWidget):
         finally:
             self.table.itemChanged.connect(self.item_changed)
 
+        # Restart applet according to new spec if already running.
+        if item.checkState(0) == QtCore.Qt.Checked:
+            item.setCheckState(0, QtCore.Qt.Unchecked)
+            item.setCheckState(0, QtCore.Qt.Checked)
+
     def create(self, uid, name, spec):
         dock = _AppletDock(self.datasets_sub, uid, name, spec, self.extra_substitutes)
         self.main_window.addDockWidget(QtCore.Qt.RightDockWidgetArea, dock)
