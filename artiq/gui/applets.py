@@ -629,7 +629,10 @@ class AppletsDock(QtWidgets.QDockWidget):
     def restore_state_item(self, state, parent):
         for wis in state:
             if wis[0] == "applet":
-                _, uid, enabled, name, spec, geometry, is_transient = wis
+                # Support seamless upgrading from versions that didn't support
+                # transient applets.
+                _, uid, enabled, name, spec, geometry = wis[:6]
+                is_transient = wis[6] if len(wis) >= 7 else False
                 if spec["ty"] not in {"command", "code"}:
                     raise ValueError("Invalid applet spec type: "
                                      + str(spec["ty"]))
