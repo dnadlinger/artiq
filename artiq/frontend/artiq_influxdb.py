@@ -126,6 +126,9 @@ class _Mock:
     def __delitem__(self, k):
         pass
 
+    def append(self, v):
+        pass
+
 
 class Datasets:
     def __init__(self, filter_function, writer, init):
