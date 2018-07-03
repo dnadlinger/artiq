@@ -476,7 +476,7 @@ class ExperimentManager:
     #: argument_ui key string.
     argument_ui_classes = dict()
 
-    def __init__(self, main_window,
+    def __init__(self, main_window, dataset_sub,
                  explist_sub, schedule_sub,
                  schedule_ctl, experiment_db_ctl):
         self.main_window = main_window
@@ -489,12 +489,17 @@ class ExperimentManager:
         self.submission_arguments = dict()
         self.argument_ui_names = dict()
 
+        self.datasets = dict()
+        dataset_sub.add_setmodel_callback(self.set_dataset_model)
         self.explist = dict()
         explist_sub.add_setmodel_callback(self.set_explist_model)
         self.schedule = dict()
         schedule_sub.add_setmodel_callback(self.set_schedule_model)
 
         self.open_experiments = dict()
+
+    def set_dataset_model(self, model):
+        self.datasets = model
 
     def set_explist_model(self, model):
         self.explist = model.backing_store
