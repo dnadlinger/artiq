@@ -710,6 +710,6 @@ class ExperimentManager:
         self.submission_scheduling = state["scheduling"]
         self.submission_options = state["options"]
         self.submission_arguments = state["arguments"]
-        self.argument_ui_names = state["argument_uis"]
+        self.argument_ui_names = state.get("argument_uis", {})
         for expurl in state["open_docks"]:
             self.open_experiment(expurl)
