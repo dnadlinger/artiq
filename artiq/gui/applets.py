@@ -397,6 +397,8 @@ class AppletsDock(QtWidgets.QDockWidget):
             raise ValueError
 
     def set_spec(self, item, spec):
+        spec_changed_and_active = False
+
         self.table.itemChanged.disconnect()
         try:
             item.applet_spec_ty = spec["ty"]
@@ -413,12 +415,13 @@ class AppletsDock(QtWidgets.QDockWidget):
                 raise ValueError
             dock = item.applet_dock
             if dock is not None:
+                spec_changed_and_active = dock.spec != spec
                 dock.spec = spec
         finally:
             self.table.itemChanged.connect(self.item_changed)
 
         # Restart applet according to new spec if already running.
-        if item.checkState(0) == QtCore.Qt.Checked:
+        if spec_changed_and_active:
             item.setCheckState(0, QtCore.Qt.Unchecked)
             item.setCheckState(0, QtCore.Qt.Checked)
 
