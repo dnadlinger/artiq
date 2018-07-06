@@ -96,6 +96,8 @@ class DatasetNamespaces:
 
     async def stop(self):
         tasks = self._gc_tasks.values()
+        if not tasks:
+            return
         for t in tasks:
             t.cancel()
         await asyncio.wait(tasks)
