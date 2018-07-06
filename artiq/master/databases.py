@@ -1,4 +1,5 @@
 import asyncio
+import copy
 import tokenize
 
 from functools import partial
@@ -116,7 +117,7 @@ class DatasetNamespaces:
     def update_rid_namespace(self, rid, mod):
         process_mod(self._rid_notifiers[rid], mod)
         # Forward to global namespace as well.
-        self._dataset_db.update(mod)
+        self._dataset_db.update(copy.deepcopy(mod))
 
     def finish_rid(self, rid):
         if rid not in self._rid_notifiers:
