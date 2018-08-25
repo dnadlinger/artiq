@@ -519,6 +519,8 @@ class ExperimentManager:
 
     def get_argument_editor_class(self, expurl):
         ui_name = self.argument_ui_names.get(expurl, None)
+        if not ui_name and expurl[:5] == "repo:":
+            ui_name = self.explist.get(expurl[5:], {}).get("argument_ui", None)
         if ui_name:
             result = self.argument_ui_classes.get(ui_name, None)
             if result:
