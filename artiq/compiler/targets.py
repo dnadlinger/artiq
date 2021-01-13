@@ -88,6 +88,7 @@ class Target:
     print_function = "printf"
     little_endian = False
     now_pinning = True
+    has_simd = False
 
     tool_ld = "ld.lld"
     tool_strip = "llvm-strip"
@@ -107,35 +108,25 @@ class Target:
         return llmachine
 
     def optimize(self, llmodule):
-        llpassmgr = llvm.create_module_pass_manager()
+        llmachine = self.target_machine()
+        with llvm.create_pass_manager_builder() as pmb:
+            pmb.opt_level = 2
+            pmb.loop_vectorize = self.has_simd
+            # slp_vectorize too?
+            pmb.inlining_threshold = 275
 
-        # Register our alias analysis passes.
-        llpassmgr.add_basic_alias_analysis_pass()
-        llpassmgr.add_type_based_alias_analysis_pass()
+            with llvm.create_function_pass_manager(llmodule) as fpm:
+                llmachine.add_analysis_passes(fpm)
+                pmb.populate(fpm)
+                for func in llmodule.functions:
+                    fpm.initialize()
+                    fpm.run(func)
+                    fpm.finalize()
 
-        # Start by cleaning up after our codegen and exposing as much
-        # information to LLVM as possible.
-        llpassmgr.add_constant_merge_pass()
-        llpassmgr.add_cfg_simplification_pass()
-        llpassmgr.add_instruction_combining_pass()
-        llpassmgr.add_sroa_pass()
-        llpassmgr.add_dead_code_elimination_pass()
-        llpassmgr.add_function_attrs_pass()
-        llpassmgr.add_global_optimizer_pass()
-
-        # Now, actually optimize the code.
-        llpassmgr.add_function_inlining_pass(275)
-        llpassmgr.add_ipsccp_pass()
-        llpassmgr.add_instruction_combining_pass()
-        llpassmgr.add_gvn_pass()
-        llpassmgr.add_cfg_simplification_pass()
-        llpassmgr.add_licm_pass()
-
-        # Clean up after optimizing.
-        llpassmgr.add_dead_arg_elimination_pass()
-        llpassmgr.add_global_dce_pass()
-
-        llpassmgr.run(llmodule)
+            with llvm.create_module_pass_manager() as mpm:
+                llmachine.add_analysis_passes(mpm)
+                pmb.populate(mpm)
+                mpm.run(llmodule)
 
     def compile(self, module):
         """Compile the module to a relocatable object for this target."""
@@ -279,6 +270,7 @@ class CortexA9Target(Target):
     print_function = "core_log"
     little_endian = True
     now_pinning = False
+    has_simd = True
 
     tool_ld = "armv7-unknown-linux-gnueabihf-ld"
     tool_strip = "armv7-unknown-linux-gnueabihf-strip"
