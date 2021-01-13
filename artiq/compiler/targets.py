@@ -83,6 +83,7 @@ class Target:
     """
     triple = "unknown"
     data_layout = ""
+    cpu = ""
     features = []
     print_function = "printf"
     little_endian = False
@@ -99,6 +100,7 @@ class Target:
     def target_machine(self):
         lltarget = llvm.Target.from_triple(self.triple)
         llmachine = lltarget.create_target_machine(
+                        cpu=self.cpu,
                         features=",".join(["+{}".format(f) for f in self.features]),
                         reloc="pic", codemodel="default")
         llmachine.set_asm_verbosity(True)
@@ -272,6 +274,7 @@ class OR1KTarget(Target):
 class CortexA9Target(Target):
     triple = "armv7-unknown-linux-gnueabihf"
     data_layout = "e-m:e-p:32:32-i64:64-v128:64:128-a:0:32-n32-S64"
+    cpu = "cortex-a9"
     features = ["dsp", "fp16", "neon", "vfp3"]
     print_function = "core_log"
     little_endian = True
