@@ -397,6 +397,11 @@ class LLVMIRGenerator:
             if name in ("rtio_log", "rpc_send", "rpc_send_async",
                         self.target.print_function):
                 llglobal.attributes.add("nounwind")
+            if name in ("now_mu", "at_mu", "delay_mu"):
+                llglobal.attributes.add("inaccessiblememonly")
+                llglobal.attributes.add("nounwind")
+            if name == "now_mu":
+                llglobal.attributes.add("readonly")
             if name.find("__py_") == 0:
                 llglobal.linkage = 'linkonce_odr'
                 self.emit_intrinsic(name, llglobal)
