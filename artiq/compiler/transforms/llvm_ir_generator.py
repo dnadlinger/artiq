@@ -1421,14 +1421,31 @@ class LLVMIRGenerator:
             self.llbuilder.branch(llnormalblock)
         return llret
 
-    def process_Call(self, insn):
+    def _process_call_or_invoke(self, insn, is_invoke):
+        if is_invoke:
+            llnormalblock = self.map(insn.normal_target())
+            llunwindblock = self.map(insn.exception_target())
+            def make_call_insn(llfun, llargs):
+                return self.llbuilder.invoke(llfun,
+                                             llargs,
+                                             llnormalblock,
+                                             llunwindblock,
+                                             name=insn.name)
+        else:
+            llnormalblock = None
+            llunwindblock = None
+            def make_call_insn(llfun, llargs):
+                return self.llbuilder.call(llfun, llargs, name=insn.name)
+
         functiontyp = insn.target_function().type
         if types.is_rpc(functiontyp):
             return self._build_rpc(insn.target_function().loc,
                                    functiontyp,
                                    insn.arguments(),
-                                   llnormalblock=None, llunwindblock=None)
-        elif types.is_external_function(functiontyp):
+                                   llnormalblock=llnormalblock,
+                                   llunwindblock=llunwindblock)
+
+        if types.is_external_function(functiontyp):
             llfun, llargs = self._prepare_ffi_call(insn)
         else:
             llfun, llargs = self._prepare_closure_call(insn)
@@ -1437,12 +1454,12 @@ class LLVMIRGenerator:
             llstackptr = self.llbuilder.call(self.llbuiltin("llvm.stacksave"), [])
 
             llresultslot = self.llbuilder.alloca(llfun.type.pointee.args[0].pointee)
-            llcall = self.llbuilder.call(llfun, [llresultslot] + llargs)
+            llcall = make_call_insn(llfun, [llresultslot] + llargs)
             llresult = self.llbuilder.load(llresultslot)
 
             self.llbuilder.call(self.llbuiltin("llvm.stackrestore"), [llstackptr])
         else:
-            llcall = llresult = self.llbuilder.call(llfun, llargs, name=insn.name)
+            llcall = llresult = make_call_insn(llfun, llargs)
 
             if isinstance(llresult.type, ll.VoidType):
                 # We have NoneType-returning functions return void, but None is
@@ -1451,42 +1468,17 @@ class LLVMIRGenerator:
 
             # Never add TBAA nowrite metadata to a functon with sret!
             # This leads to miscompilations.
-            if types.is_external_function(functiontyp) and 'nowrite' in functiontyp.flags:
+            if (not is_invoke and types.is_external_function(functiontyp)
+                    and 'nowrite' in functiontyp.flags):
                 llcall.set_metadata('tbaa', self.tbaa_nowrite_call)
 
         return llresult
 
+    def process_Call(self, insn):
+        return self._process_call_or_invoke(insn, is_invoke=False)
+
     def process_Invoke(self, insn):
-        functiontyp = insn.target_function().type
-        llnormalblock = self.map(insn.normal_target())
-        llunwindblock = self.map(insn.exception_target())
-        if types.is_rpc(functiontyp):
-            return self._build_rpc(insn.target_function().loc,
-                                   functiontyp,
-                                   insn.arguments(),
-                                   llnormalblock, llunwindblock)
-        elif types.is_external_function(functiontyp):
-            llfun, llargs = self._prepare_ffi_call(insn)
-        else:
-            llfun, llargs = self._prepare_closure_call(insn)
-
-        if self.has_sret(functiontyp):
-            llstackptr = self.llbuilder.call(self.llbuiltin("llvm.stacksave"), [])
-
-            llresultslot = self.llbuilder.alloca(llfun.type.pointee.args[0].pointee)
-            llcall = self.llbuilder.invoke(llfun, llargs, llnormalblock, llunwindblock,
-                                           name=insn.name)
-            llresult = self.llbuilder.load(llresultslot)
-
-            self.llbuilder.call(self.llbuiltin("llvm.stackrestore"), [llstackptr])
-        else:
-            llcall = self.llbuilder.invoke(llfun, llargs, llnormalblock, llunwindblock,
-                                           name=insn.name)
-
-            # The !tbaa metadata is not legal to use with the invoke instruction,
-            # so unlike process_Call, we do not set it here.
-
-        return llcall
+        return self._process_call_or_invoke(insn, is_invoke=True)
 
     def _quote_listish_to_llglobal(self, value, elt_type, path, kind_name):
         llelts    = [self._quote(value[i], elt_type, lambda: path() + [str(i)])
