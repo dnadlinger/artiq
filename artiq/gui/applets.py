@@ -1,5 +1,6 @@
 import logging
 import asyncio
+import platform
 import sys
 import string
 import shlex
@@ -103,6 +104,8 @@ class AppletIPCServer(AsyncioParentComm):
 
     async def read_pyon(self):
         line = await self.readline()
+        if not line:
+            return None
         return pyon.decode(line.decode())
 
     def _is_dataset_subscribed(self, key):
@@ -137,11 +140,14 @@ class AppletIPCServer(AsyncioParentComm):
                     return
         self.write_pyon({"action": "mod", "mod": mod})
 
-    async def serve(self, embed_cb):
+    async def serve(self, embed_cb, process_exited_cb):
         self.dataset_sub.notify_cbs.append(self._on_mod)
         try:
             while True:
                 obj = await self.read_pyon()
+                if obj is None:
+                    process_exited_cb()
+                    return
                 try:
                     action = obj["action"]
                     if action == "embed":
@@ -177,9 +183,9 @@ class AppletIPCServer(AsyncioParentComm):
         finally:
             self.dataset_sub.notify_cbs.remove(self._on_mod)
 
-    def start_server(self, embed_cb, *, loop=None):
+    def start_server(self, embed_cb, process_exited_cb, *, loop=None):
         self.server_task = asyncio.ensure_future(
-            self.serve(embed_cb), loop=loop)
+            self.serve(embed_cb, process_exited_cb), loop=loop)
 
     async def stop_server(self):
         if hasattr(self, "server_task"):
@@ -187,15 +193,8 @@ class AppletIPCServer(AsyncioParentComm):
             await asyncio.wait([self.server_task])
 
 
-class _AppletDock(QDockWidgetCloseDetect):
-    def __init__(self, dataset_sub, dataset_ctl, expmgr, uid, name, spec, extra_substitutes):
-        QDockWidgetCloseDetect.__init__(self, "Applet: " + name)
-        self.setObjectName("applet" + str(uid))
-
-        qfm = QtGui.QFontMetrics(self.font())
-        self.setMinimumSize(20*qfm.averageCharWidth(), 5*qfm.lineSpacing())
-        self.resize(40*qfm.averageCharWidth(), 10*qfm.lineSpacing())
-
+class _AppletLauncher:
+    def __init__(self, dataset_sub, dataset_ctl, expmgr, name, spec, extra_substitutes):
         self.dataset_sub = dataset_sub
         self.dataset_ctl = dataset_ctl
         self.expmgr = expmgr
@@ -207,7 +206,6 @@ class _AppletDock(QDockWidgetCloseDetect):
 
     def rename(self, name):
         self.applet_name = name
-        self.setWindowTitle("Applet: " + name)
 
     def _get_log_source(self):
         return "applet({})".format(self.applet_name)
@@ -240,7 +238,7 @@ class _AppletDock(QDockWidgetCloseDetect):
             asyncio.ensure_future(
                 LogParser(self._get_log_source).stream_task(
                     self.ipc.process.stderr))
-            self.ipc.start_server(self.embed)
+            self.ipc.start_server(self.embed, self.process_exited)
         finally:
             self.starting_stopping = False
 
@@ -262,16 +260,6 @@ class _AppletDock(QDockWidgetCloseDetect):
             await self.start_process(args, self.spec["code"])
         else:
             raise ValueError
-
-    def embed(self, win_id):
-        logger.debug("capturing window 0x%x for %s", win_id, self.applet_name)
-        self.embed_window = QtGui.QWindow.fromWinId(win_id)
-        self.embed_widget = QtWidgets.QWidget.createWindowContainer(
-            self.embed_window)
-        self.setWidget(self.embed_widget)
-        # return the size after embedding. Applet must resize to that,
-        # otherwise the applet may not fit within the dock properly.
-        return self.embed_widget.size()
 
     async def terminate(self, delete_self=True):
         if self.starting_stopping:
@@ -306,6 +294,65 @@ class _AppletDock(QDockWidgetCloseDetect):
     async def restart(self):
         await self.terminate(False)
         await self.start()
+
+    def fix_initial_size(self):
+        pass
+
+    def process_exited(self):
+        self.close()
+
+
+class _AppletStandalone(_AppletLauncher, QtCore.QObject):
+    sigClosed = QtCore.pyqtSignal()
+
+    def __init__(self, datasets_sub, dataset_ctl, expmgr, name, spec, extra_substitutes):
+        _AppletLauncher.__init__(self, datasets_sub, dataset_ctl, expmgr, name, spec, extra_substitutes)
+        QtCore.QObject.__init__(self)
+
+    def embed(self, win_id):
+        raise NotImplementedError
+
+    def saveGeometry(self):
+        return None
+
+    def restoreGeometry(self, geom):
+        pass
+
+    def close(self):
+        self.sigClosed.emit()
+
+    def isFloating(self):
+        return True
+
+
+class _AppletDock(_AppletLauncher, QDockWidgetCloseDetect):
+    def __init__(self, datasets_sub, dataset_ctl, uid, name, spec, extra_substitutes):
+        _AppletLauncher.__init__(self, datasets_sub, dataset_ctl, name, spec, extra_substitutes)
+        QDockWidgetCloseDetect.__init__(self, "Applet: " + name)
+        self.setObjectName("applet" + str(uid))
+
+        qfm = QtGui.QFontMetrics(self.font())
+        self.setMinimumSize(20*qfm.averageCharWidth(), 5*qfm.lineSpacing())
+        self.resize(40*qfm.averageCharWidth(), 10*qfm.lineSpacing())
+
+    def embed(self, win_id):
+        logger.debug("capturing window 0x%x for %s", win_id, self.applet_name)
+        self.embed_window = QtGui.QWindow.fromWinId(win_id)
+        self.embed_widget = QtWidgets.QWidget.createWindowContainer(
+            self.embed_window)
+        self.setWidget(self.embed_widget)
+        # return the size after embedding. Applet must resize to that,
+        # otherwise the applet may not fit within the dock properly.
+        return self.embed_widget.size()
+
+    def rename(self, name):
+        super().rename(name)
+        self.setWindowTitle("Applet: " + name)
+
+    def process_exited(self):
+        if not self.starting_stopping:
+            logger.warning("Applet %s exited unexpectedly", self.applet_name)
+        super().process_exited()
 
 
 _templates = [
@@ -528,11 +575,19 @@ class AppletsDock(QtWidgets.QDockWidget):
             self.table.itemChanged.connect(self.item_changed)
 
     def create(self, item, name, spec):
-        dock = _AppletDock(self.dataset_sub, self.dataset_ctl, self.expmgr, item.applet_uid, name, spec, self.extra_substitutes)
-        self.main_window.addDockWidget(QtCore.Qt.DockWidgetArea.RightDockWidgetArea, dock)
-        dock.setFloating(True)
-        asyncio.ensure_future(dock.start(), loop=self._loop)
+        # FIXME: Refactor into global mode toggle instead.
+        if platform.system() == "Darwin":
+            dock = _AppletStandalone(self.dataset_sub, self.dataset_ctl, self.expmgr,
+                                     name, spec, self.extra_substitutes)
+        else:
+            dock = _AppletDock(self.dataset_sub, self.dataset_ctl, self.expmgr,
+                               item.applet_uid, name, spec,
+                               self.extra_substitutes)
+            self.main_window.addDockWidget(
+                QtCore.Qt.DockWidgetArea.RightDockWidgetArea, dock)
+            dock.setFloating(True)
         dock.sigClosed.connect(partial(self.on_dock_closed, item, dock))
+        asyncio.ensure_future(dock.start(), loop=self._loop)
         return dock
 
     def item_changed(self, item, column):

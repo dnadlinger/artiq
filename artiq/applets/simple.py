@@ -1,6 +1,7 @@
 import logging
 import argparse
 import asyncio
+import platform
 import os
 import string
 
@@ -268,7 +269,22 @@ class SimpleApplet:
         self.main_widget = self.main_widget_class(self.args, self.req)
         if self.embed is not None:
             self.ipc.set_close_cb(self.main_widget.close)
-            if os.name == "nt":
+            system = platform.system()
+            if system == "Darwin":
+                # Cross-process window embedding does not seem to be supported at all
+                # on macOS (as of Qt 6.5), so show applet as a "tool" (slim) window
+                # always staying on top. There does not seem to be an easy way to link
+                # the "stay on top" property to the parent process, although we could
+                # conceivably implement this ourselves across IPC.
+                self.main_widget.setWindowFlags(
+                    QtCore.Qt.WindowType.Tool
+                    | QtCore.Qt.WindowType.WindowStaysOnTopHint)
+                self.main_widget.setAttribute(
+                    QtCore.Qt.WidgetAttribute.WA_MacAlwaysShowToolWindow)
+                self.main_widget.show()
+                # Need to set QuitOnClose manually for Tool window type to get closeEvent.
+                self.main_widget.setAttribute(QtCore.Qt.WidgetAttribute.WA_QuitOnClose);
+            elif system == "Windows":
                 # HACK: if the window has a frame, there will be garbage
                 # (usually white) displayed at its right and bottom borders
                 #  after it is embedded.
