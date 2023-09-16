@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 
-from PyQt5 import QtWidgets, QtCore, QtGui
+from PyQt6 import QtWidgets, QtCore, QtGui
 from artiq.applets.simple import SimpleApplet
 
 
@@ -15,7 +15,7 @@ class QCancellableLineEdit(QtWidgets.QLineEdit):
     editCancelled = QtCore.pyqtSignal()
 
     def keyPressEvent(self, event):
-        if event.key() == QtCore.Qt.Key_Escape:
+        if event.key() == QtCore.Qt.Key.Key_Escape:
             self.editCancelled.emit()
         else:
             super().keyPressEvent(event)
@@ -34,7 +34,7 @@ class NumberWidget(QtWidgets.QStackedWidget):
 
         self.edit_widget = QCancellableLineEdit()
         self.edit_widget.setValidator(QtGui.QDoubleValidator())
-        self.edit_widget.setAlignment(QtCore.Qt.AlignRight)
+        self.edit_widget.setAlignment(QtCore.Qt.AlignmentFlag.AlignRight)
         self.edit_widget.editCancelled.connect(self.cancel_edit)
         self.edit_widget.returnPressed.connect(self.confirm_edit)
         self.addWidget(self.edit_widget)
