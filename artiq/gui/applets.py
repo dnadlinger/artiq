@@ -14,7 +14,7 @@ from sipyco.pipe_ipc import AsyncioParentComm
 from sipyco.logging_tools import LogParser
 from sipyco import pyon
 
-from artiq.gui.tools import QDockWidgetCloseDetect, LayoutWidget
+from artiq.gui.tools import QDockWidgetCloseDetect
 
 
 logger = logging.getLogger(__name__)
