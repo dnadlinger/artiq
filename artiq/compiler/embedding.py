@@ -5,6 +5,7 @@ the references to the host objects and translates the functions
 annotated as ``@kernel`` when they are referenced.
 """
 
+import enum
 import typing
 import os, re, linecache, inspect, textwrap, types as pytypes, numpy
 from collections import OrderedDict, defaultdict
@@ -529,6 +530,11 @@ class ASTSynthesizer:
                 if hasattr(value, 'kernel_invariants'):
                     assert isinstance(value.kernel_invariants, set)
                     instance_type.constant_attributes = value.kernel_invariants
+                elif issubclass(typ, enum.Enum):
+                    # For enum.Enum instances, this is not only an optimisation, but
+                    # also avoids an exception on attribute writeback, as `value` can
+                    # not be written to.
+                    instance_type.constant_attributes = {"value"}
 
             if isinstance(value, type):
                 self.value_map[constructor_type].append((value, loc))
