@@ -27,7 +27,6 @@ class RunTool:
         cmdline = []
         for argument in self._pattern:
             cmdline.append(argument.format(**self._tempnames))
-
         # https://bugs.python.org/issue17023
         windows = os.name == "nt"
         process = subprocess.Popen(cmdline, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
@@ -85,6 +84,12 @@ class Target:
     triple = "unknown"
     data_layout = ""
     features = []
+    linker_options = [
+        "-shared",
+        "--eh-frame-hdr",
+        "-T" + os.path.join(os.path.dirname(__file__), "kernel.ld"),
+        "-x"
+    ]
     additional_linker_options = []
     print_function = "printf"
     now_pinning = True
@@ -185,11 +190,9 @@ class Target:
 
     def link(self, objects):
         """Link the relocatable objects into a shared library for this target."""
-        with RunTool([self.tool_ld, "-shared", "--eh-frame-hdr"] +
+        with RunTool([self.tool_ld] + self.linker_options +
                      self.additional_linker_options +
-                     ["-T" + os.path.join(os.path.dirname(__file__), "kernel.ld")] +
                      ["{{obj{}}}".format(index) for index in range(len(objects))] +
-                     ["-x"] +
                      ["-o", "{output}"],
                      output=None,
                      **{"obj{}".format(index): obj for index, obj in enumerate(objects)}) \
@@ -268,6 +271,10 @@ class NativeTarget(Target):
         super().__init__()
         self.triple = llvm.get_default_triple()
         self.data_layout = str(llvm.targets.Target.from_default_triple().create_target_machine().target_data)
+
+    tool_ld = "gcc"
+    linker_options = ["/home/dpn/scratch/artiq/artiq/firmware/emulator/libartiq_emulator.so"]
+
 
 class RV32IMATarget(Target):
     triple = "riscv32-unknown-linux"

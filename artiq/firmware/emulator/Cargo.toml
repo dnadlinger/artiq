@@ -1,0 +1,20 @@
+[package]
+authors = ["M-Labs"]
+name = "artiq_emulator"
+version = "0.0.0"
+
+[lib]
+name = "artiq_emulator"
+path = "lib.rs"
+crate-type = ["cdylib"]
+
+[dependencies]
+byteorder = { version = "1.0" }
+io = { path = "../libio", features = ["byteorder", "alloc"] }
+unwind = { path = "../libunwind" }
+failure = { version = "0.1", default-features = false }
+failure_derive = { version = "0.1", default-features = false }
+log = { version = "0.4", default-features = false, optional = true }
+
+[features]
+alloc = ["io/alloc"]

@@ -13,9 +13,11 @@ from artiq.language.units import *
 
 from artiq.compiler.module import Module
 from artiq.compiler.embedding import Stitcher
-from artiq.compiler.targets import RV32IMATarget, RV32GTarget, CortexA9Target
+from artiq.compiler.targets import (RV32IMATarget, RV32GTarget, CortexA9Target,
+                                    NativeTarget)
 
-from artiq.coredevice.comm_kernel import CommKernel, CommKernelDummy
+from artiq.coredevice.comm_kernel import (CommKernel, CommKernelDummy, 
+                                          CommKernelEmulation)
 # Import for side effects (creating the exception classes).
 from artiq.coredevice import exceptions
 
@@ -100,6 +102,9 @@ class Core:
         self.coarse_ref_period = ref_period*ref_multiplier
         if host is None:
             self.comm = CommKernelDummy()
+        elif host == "<emulate-local>":
+            self.comm = CommKernelEmulation()
+            self.target_cls = NativeTarget
         else:
             self.comm = CommKernel(host)
         self.analyzer_proxy_name = analyzer_proxy

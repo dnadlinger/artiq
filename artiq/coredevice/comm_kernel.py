@@ -192,19 +192,12 @@ class CommKernel:
         self.read_buffer = bytearray()
         self.write_buffer = bytearray()
 
+    def is_open(self) -> bool:
+        return hasattr(self, "socket")
 
-    def open(self):
-        if hasattr(self, "socket"):
-            return
-        self.socket = create_connection(self.host, self.port)
-        self.socket.sendall(b"ARTIQ coredev\n")
-        endian = self._read(1)
-        if endian == b"e":
-            self.endian = "<"
-        elif endian == b"E":
-            self.endian = ">"
-        else:
-            raise IOError("Incorrect reply from device: expected e/E.")
+    def _configure_endian(self, endian):
+        self.endian = endian
+
         self.unpack_int32 = struct.Struct(self.endian + "l").unpack
         self.unpack_int64 = struct.Struct(self.endian + "q").unpack
         self.unpack_float64 = struct.Struct(self.endian + "d").unpack
@@ -215,8 +208,21 @@ class CommKernel:
         self.pack_int64 = struct.Struct(self.endian + "q").pack
         self.pack_float64 = struct.Struct(self.endian + "d").pack
 
+    def open(self):
+        if self.is_open():
+            return
+        self.socket = create_connection(self.host, self.port)
+        self.socket.sendall(b"ARTIQ coredev\n")
+        endian = self._read(1)
+        if endian == b"e":
+            self._configure_endian("<")
+        elif endian == b"E":
+            self._configure_endian(">")
+        else:
+            raise IOError("Incorrect reply from device: expected e/E.")
+
     def close(self):
-        if not hasattr(self, "socket"):
+        if not self.is_open():
             return
         self.socket.close()
         del self.socket
@@ -736,3 +742,64 @@ class CommKernel:
                 self._read_expect(Reply.KernelFinished)
                 self._process_async_error()
                 return
+
+
+import subprocess
+
+class CommKernelEmulation(CommKernel):
+    def __init__(self):
+        super().__init__("<emulate-local>")
+
+        # We can only open the connection after launching the kernel executable.
+        self._open_called: bool = False
+
+        self._process: subprocess.Popen | None = None
+
+    def is_open(self) -> bool:
+        return self._open_called
+
+    def open(self):
+        self._open_called = True
+
+    def check_system_info(self):
+        # No actual core device version to check.
+        pass
+
+    def load(self, kernel_library):
+        # open() to keep the same API.
+        self.open()
+
+        import pathlib, stat, tempfile
+        with tempfile.NamedTemporaryFile(delete=False) as f:
+            f.write(kernel_library)
+        executable = pathlib.Path(f.name)
+        executable.chmod(executable.stat().st_mode | stat.S_IEXEC)
+
+        self._process = subprocess.Popen(executable, stdout=subprocess.PIPE)
+        expected_banner = b"ARTIQ kernel emulator, listening on: "
+        banner = self._process.stdout.readline()
+
+        if (code := self._process.poll()) is not None:
+            raise LoadError("Kernel process terminated prematurely " +
+                            f"(exit code {code})")
+        if not banner.startswith(expected_banner):
+            raise LoadError(f"Unexpected emulator output: {banner}")
+
+        host, port = banner[len(expected_banner):].split(b":")
+        self.socket = create_connection(host, int(port))
+        self._configure_endian("<")
+
+    def close(self):
+        if not self.is_open() or self._process is None:
+            return
+
+        if hasattr(self, "socket"):
+            self.socket.close()
+            del self.socket
+
+        if (code := self._process.poll()) is not None:
+            logger.debug(f"Kernel process already terminated (exit code {code})")
+        else:
+            logger.debug("Waiting for kernel process to terminate...")
+            self._process.wait()
+            logger.debug(f"Kernel process terminated (exit code {self._process.returncode})")
