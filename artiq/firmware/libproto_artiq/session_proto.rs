@@ -200,7 +200,7 @@ impl<'a> Reply<'a> {
                 writer.write_u32(exceptions.len() as u32)?;
                 for exception in exceptions.iter() {
                     let exception = exception.as_ref().unwrap();
-                    writer.write_u32(exception.id as u32)?;
+                    writer.write_u32(exception.id)?;
                     if exception.message.len() == usize::MAX {
                         // exception with host string
                         write_exception_string(writer, &exception.message)?;
@@ -219,15 +219,15 @@ impl<'a> Reply<'a> {
                 }
 
                 for sp in stack_pointers.iter() {
-                    writer.write_u32(sp.stack_pointer as u32)?;
+                    writer.write_all(&sp.stack_pointer.to_ne_bytes())?;
                     writer.write_u32(sp.initial_backtrace_size as u32)?;
                     writer.write_u32(sp.current_backtrace_size as u32)?;
                 }
 
                 writer.write_u32(backtrace.len() as u32)?;
                 for &(addr, sp) in backtrace {
-                    writer.write_u32(addr as u32)?;
-                    writer.write_u32(sp as u32)?;
+                    writer.write_all(&addr.to_ne_bytes())?;
+                    writer.write_all(&sp.to_ne_bytes())?;
                 }
                 writer.write_u8(async_errors)?;
             },

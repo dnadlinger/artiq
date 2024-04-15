@@ -10,6 +10,8 @@
 #![crate_name = "artiq_emulator"]
 #![crate_type = "cdylib"]
 
+mod bare_thread;
+
 extern crate byteorder;
 extern crate failure;
 extern crate libc;
@@ -37,12 +39,6 @@ pub mod proto_artiq {
     #[path = "../libproto_artiq/session_proto.rs"]
     pub mod session_proto;
 }
-
-use alloc::eprintln;
-use alloc::option::Option::Some;
-use proto_artiq::rpc_proto as rpc;
-use proto_artiq::session_proto as host;
-
 // Note: this does *not* match the cslice crate!
 // ARTIQ Python has the slice length field fixed at 32 bits, even on 64-bit platforms.
 mod cslice {
@@ -130,32 +126,29 @@ mod cslice {
 }
 
 use core::convert::AsRef;
-use std::{process, str};
+use cslice::CSlice;
+use proto_artiq::rpc_proto as rpc;
+use proto_artiq::session_proto as host;
+use std::io::{Read, Write};
+use std::net::{TcpListener, TcpStream};
+use std::sync::mpsc;
 
 fn terminate(
     exceptions: &'static [Option<eh_artiq::Exception<'static>>],
-    _stack_pointers: &'static [eh_artiq::StackPointerBacktrace],
-    _backtrace: &'static mut [(usize, usize)],
+    stack_pointers: &'static [eh_artiq::StackPointerBacktrace],
+    backtrace: &'static mut [(usize, usize)],
 ) -> ! {
-    eprintln!("{}", exceptions.len());
-    for exception in exceptions.iter() {
-        let exception = exception.as_ref().unwrap();
-        eprintln!(
-            "Uncaught {}: {} ({}, {}, {})",
-            exception.id,
-            str::from_utf8(exception.message.as_ref()).unwrap(),
-            exception.param[0],
-            exception.param[1],
-            exception.param[2]
-        );
-        eprintln!(
-            "at {}:{}:{}",
-            str::from_utf8(exception.file.as_ref()).unwrap(),
-            exception.line,
-            exception.column
-        );
-    }
-    process::exit(1);
+    let queue = unsafe { TO_WORKER_TX.as_ref().unwrap() };
+
+    queue
+        .send(KernelToWorker::RunException {
+            exceptions,
+            stack_pointers,
+            backtrace,
+        })
+        .unwrap();
+    std::thread::park();
+    panic!("should not have unparked thread after unhandled kernel exception");
 }
 
 #[export_name = "now"]
@@ -164,12 +157,6 @@ pub static mut NOW: i64 = 0;
 extern "C" {
     fn __modinit__();
 }
-
-use cslice::CSlice;
-use std::io::{Read, Write};
-use std::net::{TcpListener, TcpStream};
-use std::sync::mpsc;
-use std::thread;
 
 // Not using kernel_proto, as this also pulls in dyld (and also weirdly mixed requests
 // and replies in one type).
@@ -185,7 +172,12 @@ pub enum KernelToWorker<'a> {
     RpcRecv(*mut ()),
     // Log(fmt::Arguments<'a>),
     // LogSlice(&'a str),
-    KernelFinished,
+    RunFinished,
+    RunException {
+        exceptions: &'a [Option<eh::eh_artiq::Exception<'a>>],
+        stack_pointers: &'a [eh::eh_artiq::StackPointerBacktrace],
+        backtrace: &'a [(usize, usize)],
+    },
 }
 
 #[derive(Debug)]
@@ -251,7 +243,7 @@ extern "C" fn rpc_send(service: u32, tag: &CSlice<u8>, data: *const *const ()) -
             tag: unsafe { std::mem::transmute(tag.as_ref()) },
             data,
         })
-        .unwrap();
+        .unwrap()
 }
 
 #[no_mangle]
@@ -264,7 +256,7 @@ extern "C" fn rpc_send_async(service: u32, tag: &CSlice<u8>, data: *const *const
             tag: unsafe { std::mem::transmute(tag.as_ref()) },
             data,
         })
-        .unwrap();
+        .unwrap()
 }
 
 fn listen_and_accept_worker() -> std::io::Result<TcpStream> {
@@ -275,7 +267,6 @@ fn listen_and_accept_worker() -> std::io::Result<TcpStream> {
 
     // Print banner as expected by CommKernelEmulator.
     println!("ARTIQ kernel emulator, listening on: {}:{}", host, port);
-    eprintln!("ARTIQ kernel emulator, listening on: {}:{}", host, port);
 
     let (socket, _addr) = listener.accept()?;
     Ok(socket)
@@ -291,83 +282,113 @@ pub unsafe fn main() -> std::io::Result<()> {
         _ => panic!("unexpected worker message: {:?}", request),
     }
 
+    // Queues for communication between the kernel and main (socket comms) thread. This
+    // could just be SPSC, but std::sync::mpsc exists and is easy to use; good for now.
     let (to_worker_tx, to_worker_rx) = mpsc::channel();
     TO_WORKER_TX = Some(to_worker_tx);
     let (from_worker_tx, from_worker_rx) = mpsc::channel();
     FROM_WORKER_RX = Some(from_worker_rx);
-    let comm_thead = thread::spawn(move || {
-        loop {
-            eprintln!(" -- Waiting for message to worker");
-            let to_worker = to_worker_rx.recv().unwrap();
-            eprintln!(" -- Got message to worker: {:?}", to_worker);
-            match to_worker {
-                KernelToWorker::RpcSend {
-                    is_async,
-                    service,
-                    tag,
-                    data,
-                } => {
-                    host::Reply::RpcRequest { async: is_async }
-                        .write_to(&mut Worker {})
-                        .unwrap();
-                    rpc::send_args(&mut Worker {}, service, tag, data, true).unwrap();
-                    if is_async {
-                        continue;
-                    }
-                }
-                KernelToWorker::KernelFinished => {
-                    eprintln!("===== finished =====");
-                    host::Reply::KernelFinished { async_errors: 0 }
-                        .write_to(&mut Worker {})
-                        .unwrap();
-                    break;
-                }
-                _ => panic!("unexpected kernel message: {:?}", request),
-            }
 
-            let request = host::Request::read_from(&mut Worker {}).unwrap();
-            eprintln!(" -- Received worker message: {:?}", request);
-            match request {
-                host::Request::RpcReply { tag } => {
-                    let msg = to_worker_rx.recv().unwrap();
-                    let root_slot = if let KernelToWorker::RpcRecv(slot) = msg {
-                        slot
-                    } else {
-                        panic!("expected root value slot from kernel CPU, not {:?}", msg)
-                    };
-                    eprintln!(" -- Got msg: {:?}", msg);
-                    rpc::recv_return(&mut Worker {}, &tag, root_slot, &|size| -> Result<
-                        _,
-                        io::Error<std::io::Error>,
-                    > {
-                        if size == 0 {
-                            // Don't try to allocate zero-length values, as RpcRecvReply(0) is
-                            // used to terminate the kernel-side receive loop.
-                            return Ok(0 as *mut ());
-                        }
-                        from_worker_tx
-                            .send(WorkerToKernel::RpcRecv(Ok(size as u32)))
-                            .unwrap();
-                        let reply = to_worker_rx.recv().unwrap();
-                        if let KernelToWorker::RpcRecv(slot) = reply {
-                            Ok(slot)
-                        } else {
-                            panic!("expected nested value slot from kernel CPU, not {:?}", msg)
-                        }
-                    })
+    // We need to run the kernel code and socket handling in separate threads to be able
+    // to make use of the existing session_proto implementations, which use blocking
+    // waits for the RPC recv slots on the kernel side.
+    //
+    // Furthermore, the kernel needs to run on a (detached) background thread, as we
+    // cannot actually handle uncaught kernel exceptions from Rust; none of the panic
+    // handling functions can deal with foreign exceptions. Thus, we just use the
+    // eh_artiq terminate handler to fire off a message to the host and then park the
+    // thread until the main thread exits. For this reason, we also need to directly
+    // spawn an OS thread, as thread::spawn tries to catch panics to convert them into
+    // a Result, which would also die in the attempt to catch a foreign exception.
+    bare_thread::Thread::new(Box::new(move || {
+        __modinit__();
+        TO_WORKER_TX
+            .as_ref()
+            .unwrap()
+            .send(KernelToWorker::RunFinished)
+            .unwrap();
+    })).unwrap();
+
+    loop {
+        eprintln!(" -- Waiting for message to worker");
+        let to_worker = to_worker_rx.recv().unwrap();
+        eprintln!(" -- Got message to worker: {:?}", to_worker);
+        match to_worker {
+            KernelToWorker::RpcSend {
+                is_async,
+                service,
+                tag,
+                data,
+            } => {
+                host::Reply::RpcRequest { async: is_async }
+                    .write_to(&mut Worker {})
                     .unwrap();
-                    from_worker_tx.send(WorkerToKernel::RpcRecv(Ok(0))).unwrap();
+                rpc::send_args(&mut Worker {}, service, tag, data, true).unwrap();
+                if is_async {
+                    continue;
                 }
-                _ => panic!("unexpected worker message: {:?}", request),
             }
+            KernelToWorker::RunFinished => {
+                eprintln!("===== finished cleanly =====");
+                host::Reply::KernelFinished { async_errors: 0 }
+                    .write_to(&mut Worker {})
+                    .unwrap();
+                break;
+            }
+            KernelToWorker::RunException {
+                exceptions,
+                stack_pointers,
+                backtrace,
+            } => {
+                eprintln!("===== finished with exception =====");
+                let msg = host::Reply::KernelException {
+                    exceptions,
+                    stack_pointers,
+                    backtrace,
+                    async_errors: 0,
+                };
+                msg.write_to(&mut Worker {}).unwrap();
+                break;
+            }
+            _ => panic!("unexpected kernel message: {:?}", request),
         }
-    });
-    __modinit__();
-    TO_WORKER_TX
-        .as_ref()
-        .unwrap()
-        .send(KernelToWorker::KernelFinished)
-        .unwrap();
-    comm_thead.join().unwrap();
+
+        let request = host::Request::read_from(&mut Worker {}).unwrap();
+        eprintln!(" -- Received worker message: {:?}", request);
+        match request {
+            host::Request::RpcReply { tag } => {
+                let msg = to_worker_rx.recv().unwrap();
+                let root_slot = if let KernelToWorker::RpcRecv(slot) = msg {
+                    slot
+                } else {
+                    panic!("expected root value slot from kernel thread, not {:?}", msg)
+                };
+                eprintln!(" -- Got msg: {:?}", msg);
+                rpc::recv_return(&mut Worker {}, &tag, root_slot, &|size| -> Result<
+                    _,
+                    io::Error<std::io::Error>,
+                > {
+                    if size == 0 {
+                        // Don't try to allocate zero-length values, as RpcRecvReply(0) is
+                        // used to terminate the kernel-side receive loop.
+                        return Ok(0 as *mut ());
+                    }
+                    from_worker_tx
+                        .send(WorkerToKernel::RpcRecv(Ok(size as u32)))
+                        .unwrap();
+                    let reply = to_worker_rx.recv().unwrap();
+                    if let KernelToWorker::RpcRecv(slot) = reply {
+                        Ok(slot)
+                    } else {
+                        panic!("expected nested value slot from kernel thread, not {:?}", msg)
+                    }
+                })
+                .unwrap();
+                from_worker_tx.send(WorkerToKernel::RpcRecv(Ok(0))).unwrap();
+            }
+            _ => panic!("unexpected worker message: {:?}", request),
+        }
+    }
+
     Ok(())
 }

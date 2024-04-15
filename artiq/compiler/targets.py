@@ -222,7 +222,8 @@ class Target:
         # inside the call instruction (or its delay slot), since that's what
         # the backtrace entry should point at.
         last_inlined = None
-        offset_addresses = [hex(addr - 1) for addr in addresses]
+        assert not any(addr < 0 for addr in addresses)
+        offset_addresses = [hex(addr - (1 if addr > 0 else 0)) for addr in addresses]
         with RunTool([self.tool_symbolizer, "--addresses",  "--functions", "--inlines",
                       "--demangle", "--output-style=GNU", "--exe={library}"] + offset_addresses,
                      library=library) \

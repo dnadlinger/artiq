@@ -292,6 +292,9 @@ class CommKernel:
         (value, ) = self.unpack_float64(self._read(8))
         return value
 
+    def _read_kernel_ptr(self):
+        return self._read_int32()
+
     def _read_bool(self):
         return True if self._read_int8() else False
 
@@ -686,16 +689,17 @@ class CommKernel:
 
         exception_info = []
         for _ in range(exception_count):
-            sp = self._read_int32()
+            sp = self._read_kernel_ptr()
             initial_backtrace = self._read_int32()
             current_backtrace = self._read_int32()
             exception_info.append((sp, initial_backtrace, current_backtrace))
 
         backtrace = []
         stack_pointers = []
-        for _ in range(self._read_int32()):
-            backtrace.append(self._read_int32())
-            stack_pointers.append(self._read_int32())
+        size = self._read_int32()
+        for _ in range(size):
+            backtrace.append(self._read_kernel_ptr())
+            stack_pointers.append(self._read_kernel_ptr())
 
         self._process_async_error()
 
@@ -754,6 +758,7 @@ class CommKernelEmulation(CommKernel):
         self._open_called: bool = False
 
         self._process: subprocess.Popen | None = None
+        self._kernel_ptr_fmt = struct.Struct("N")
 
     def is_open(self) -> bool:
         return self._open_called
@@ -764,6 +769,10 @@ class CommKernelEmulation(CommKernel):
     def check_system_info(self):
         # No actual core device version to check.
         pass
+
+    def _read_kernel_ptr(self):
+        (value, ) = self._kernel_ptr_fmt.unpack(self._read(self._kernel_ptr_fmt.size))
+        return value
 
     def load(self, kernel_library):
         # open() to keep the same API.
