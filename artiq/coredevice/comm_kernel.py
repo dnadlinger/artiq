@@ -754,7 +754,9 @@ class CommKernelEmulation(CommKernel):
     def __init__(self):
         super().__init__("<emulate-local>")
 
-        # We can only open the connection after launching the kernel executable.
+        # We can only open the connection after launching the kernel executable, so
+        # keep track of open()/close() just to report is_open() as the actual
+        # CommKernel would.
         self._open_called: bool = False
 
         self._process: subprocess.Popen | None = None
@@ -799,12 +801,17 @@ class CommKernelEmulation(CommKernel):
         self.socket = create_connection(host, int(port))
         self._configure_endian("<")
 
-    def close(self):
-        if hasattr(self, "socket"):
+    def serve(self, embedding_map, symbolizer, demangler):
+        # This isn't the cleanest API, but all callers do load()/run()/serve(), so tear
+        # down the connection here. We could potentially tear down old connections in
+        # load() as well (if multiple kernels are launched in the same experiment) and
+        # close the final one in close(), but why bother.
+        try:
+            super().serve(embedding_map, symbolizer, demangler)
+        finally:
             self.socket.close()
             del self.socket
 
-        if self._process is not None:
             if (code := self._process.poll()) is not None:
                 logger.debug(f"Kernel process already terminated (exit code {code})")
             else:
@@ -812,3 +819,6 @@ class CommKernelEmulation(CommKernel):
                 self._process.wait()
                 logger.debug(f"Kernel process terminated (exit code {self._process.returncode})")
             self._process = None
+
+    def close(self):
+        self._open_called = False
