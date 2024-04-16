@@ -193,27 +193,23 @@ unsafe impl<'a> Send for WorkerToKernel<'a> {}
 static mut TO_WORKER_TX: Option<mpsc::Sender<KernelToWorker>> = None;
 static mut FROM_WORKER_RX: Option<mpsc::Receiver<WorkerToKernel>> = None;
 
-static mut WORKER: Option<TcpStream> = None;
-
-struct Worker;
+struct Worker(TcpStream);
 impl io::Read for Worker {
     type ReadError = std::io::Error;
 
     fn read(&mut self, buf: &mut [u8]) -> Result<usize, Self::ReadError> {
-        unsafe { WORKER.as_mut().unwrap().read(buf) }
+        self.0.read(buf)
     }
 }
 impl io::Write for Worker {
     type WriteError = std::io::Error;
     type FlushError = std::io::Error;
     fn write(&mut self, buf: &[u8]) -> Result<usize, Self::WriteError> {
-        eprintln!("write(): {buf:?}");
-        unsafe { WORKER.as_mut().unwrap().write(buf) }
+        self.0.write(buf)
     }
 
     fn flush(&mut self) -> Result<(), Self::FlushError> {
-        eprintln!("flush()");
-        unsafe { WORKER.as_mut().unwrap().flush() }
+        self.0.flush()
     }
 }
 
@@ -266,9 +262,11 @@ fn listen_and_accept_worker() -> std::io::Result<TcpStream> {
 
 #[no_mangle]
 pub unsafe fn main() -> std::io::Result<()> {
-    WORKER = listen_and_accept_worker()?.into();
+    let mut worker = Worker {
+        0: listen_and_accept_worker()?,
+    };
 
-    let request = host::Request::read_from(&mut Worker {}).unwrap();
+    let request = host::Request::read_from(&mut worker).unwrap();
     match request {
         host::Request::RunKernel => (),
         _ => panic!("unexpected worker message: {:?}", request),
@@ -303,21 +301,21 @@ pub unsafe fn main() -> std::io::Result<()> {
     .unwrap();
 
     loop {
-        eprintln!(" -- Waiting for message to worker");
+        // eprintln!(" -- Waiting for message to worker");
         let to_worker = to_worker_rx.recv().unwrap();
-        eprintln!(" -- Got message to worker: {:?}", to_worker);
+        // eprintln!(" -- Got message to worker: {:?}", to_worker);
         match to_worker {
             KernelToWorker::RpcSend { is_async, buffer } => {
-                WORKER.as_ref().unwrap().write_all(&buffer).unwrap();
+                worker.0.write_all(&buffer).unwrap();
 
                 if is_async {
                     continue;
                 }
             }
             KernelToWorker::RunFinished => {
-                eprintln!("===== finished cleanly =====");
+                // eprintln!("===== finished cleanly =====");
                 host::Reply::KernelFinished { async_errors: 0 }
-                    .write_to(&mut Worker {})
+                    .write_to(&mut worker)
                     .unwrap();
                 break;
             }
@@ -326,21 +324,21 @@ pub unsafe fn main() -> std::io::Result<()> {
                 stack_pointers,
                 backtrace,
             } => {
-                eprintln!("===== finished with exception =====");
+                // eprintln!("===== finished with exception =====");
                 let msg = host::Reply::KernelException {
                     exceptions,
                     stack_pointers,
                     backtrace,
                     async_errors: 0,
                 };
-                msg.write_to(&mut Worker {}).unwrap();
+                msg.write_to(&mut worker).unwrap();
                 break;
             }
             _ => panic!("unexpected kernel message: {:?}", request),
         }
 
-        let request = host::Request::read_from(&mut Worker {}).unwrap();
-        eprintln!(" -- Received worker message: {:?}", request);
+        let request = host::Request::read_from(&mut worker).unwrap();
+        // eprintln!(" -- Received worker message: {:?}", request);
         match request {
             host::Request::RpcReply { tag } => {
                 let msg = to_worker_rx.recv().unwrap();
@@ -349,8 +347,8 @@ pub unsafe fn main() -> std::io::Result<()> {
                 } else {
                     panic!("expected root value slot from kernel thread, not {:?}", msg)
                 };
-                eprintln!(" -- Got msg: {:?}", msg);
-                rpc::recv_return(&mut Worker {}, &tag, root_slot, &|size| -> Result<
+                // eprintln!(" -- Got msg: {:?}", msg);
+                rpc::recv_return(&mut worker, &tag, root_slot, &|size| -> Result<
                     _,
                     io::Error<std::io::Error>,
                 > {
