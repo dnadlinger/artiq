@@ -178,8 +178,19 @@ pub enum KernelToWorker<'a> {
 }
 
 #[derive(Debug)]
-pub enum WorkerToKernel<'a> {
-    RpcRecv(Result<u32, eh::eh_artiq::Exception<'a>>),
+struct HostException {
+    id: u32,
+    message: u32,
+    param: [i64; 3],
+    file: u32,
+    line: u32,
+    column: u32,
+    function: u32,
+}
+
+#[derive(Debug)]
+enum WorkerToKernel {
+    RpcRecv(Result<u32, HostException>),
     RpcFlush,
 }
 // HACK: To use existing types such as eh::eh_artiq::Exception, just throw away type
@@ -188,7 +199,6 @@ pub enum WorkerToKernel<'a> {
 // instance, the synchronisation given by the message exchange seems like it should
 // be enough.
 unsafe impl<'a> Send for KernelToWorker<'a> {}
-unsafe impl<'a> Send for WorkerToKernel<'a> {}
 
 static mut TO_WORKER_TX: Option<mpsc::Sender<KernelToWorker>> = None;
 static mut FROM_WORKER_RX: Option<mpsc::Receiver<WorkerToKernel>> = None;
@@ -219,10 +229,22 @@ extern "C" fn rpc_recv(slot: *mut ()) -> u32 {
     tx_queue.send(KernelToWorker::RpcRecv(slot)).unwrap();
     let rx_queue = unsafe { FROM_WORKER_RX.as_mut().unwrap() };
     let reply = rx_queue.recv().unwrap();
-    if let WorkerToKernel::RpcRecv(Ok(size)) = reply {
-        size
-    } else {
-        panic!("expected RpcRecv, not {:?}", reply)
+    match reply {
+        WorkerToKernel::RpcRecv(Ok(alloc_size)) => alloc_size,
+        WorkerToKernel::RpcRecv(Err(ref exn)) => unsafe {
+            // message/file/function are not actually slices; usize::MAX acts as a
+            // marker for them to be treated as host-side strings.
+            eh_artiq::raise(&eh_artiq::Exception {
+                id: exn.id,
+                message: CSlice::new(exn.message as *const u8, usize::MAX),
+                param: exn.param,
+                file: CSlice::new(exn.file as *const u8, usize::MAX),
+                line: exn.line,
+                column: exn.column,
+                function: CSlice::new(exn.function as *const u8, usize::MAX),
+            })
+        },
+        _ => panic!("expected RpcRecv, not {:?}", reply),
     }
 }
 
@@ -392,17 +414,16 @@ pub unsafe fn main() -> std::io::Result<()> {
                     )
                 };
 
-                let exn = eh::eh_artiq::Exception {
-                    id: id,
-                    message: CSlice::new(message as *const u8, usize::MAX),
-                    param: param,
-                    file: CSlice::new(file as *const u8, usize::MAX),
-                    line: line,
-                    column: column,
-                    function: CSlice::new(function as *const u8, usize::MAX),
-                };
                 from_worker_tx
-                    .send(WorkerToKernel::RpcRecv(Err(exn)))
+                    .send(WorkerToKernel::RpcRecv(Err(HostException {
+                        id,
+                        message,
+                        param,
+                        file,
+                        line,
+                        column,
+                        function,
+                    })))
                     .unwrap();
             }
 
