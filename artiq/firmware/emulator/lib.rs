@@ -125,7 +125,6 @@ mod cslice {
     }
 }
 
-use core::convert::AsRef;
 use cslice::CSlice;
 use proto_artiq::rpc_proto as rpc;
 use proto_artiq::session_proto as host;
@@ -165,9 +164,7 @@ extern "C" {
 pub enum KernelToWorker<'a> {
     RpcSend {
         is_async: bool,
-        service: u32,
-        tag: &'a [u8],
-        data: *const *const (),
+        buffer: Vec<u8>,
     },
     RpcRecv(*mut ()),
     // Log(fmt::Arguments<'a>),
@@ -184,7 +181,6 @@ pub enum KernelToWorker<'a> {
 pub enum WorkerToKernel<'a> {
     RpcRecv(Result<u32, eh::eh_artiq::Exception<'a>>),
     RpcFlush,
-    RpcSendAck,
 }
 // HACK: To use existing types such as eh::eh_artiq::Exception, just throw away type
 // system assurances about sharing. Will need to carefully validate threading
@@ -234,44 +230,25 @@ extern "C" fn rpc_recv(slot: *mut ()) -> u32 {
     }
 }
 
+fn send_rpc(is_async: bool, service: u32, tag: &CSlice<u8>, data: *const *const ()) {
+    let mut buffer: Vec<u8> = Vec::new();
+    host::Reply::RpcRequest { async: is_async }
+        .write_to(&mut buffer)
+        .unwrap();
+    rpc::send_args(&mut buffer, service, tag.as_ref(), data, true).unwrap();
+    unsafe { TO_WORKER_TX.as_ref().unwrap() }
+        .send(KernelToWorker::RpcSend { is_async, buffer })
+        .unwrap();
+}
+
 #[no_mangle]
 extern "C" fn rpc_send(service: u32, tag: &CSlice<u8>, data: *const *const ()) -> () {
-    let queue = unsafe { TO_WORKER_TX.as_mut().unwrap() };
-    queue
-        .send(KernelToWorker::RpcSend {
-            is_async: false,
-            service,
-            tag: unsafe { std::mem::transmute(tag.as_ref()) },
-            data,
-        })
-        .unwrap();
-    let rx_queue = unsafe { FROM_WORKER_RX.as_mut().unwrap() };
-    let reply = rx_queue.recv().unwrap();
-    if let WorkerToKernel::RpcSendAck = reply {
-        ()
-    } else {
-        panic!("expected RpcSendAck, not {:?}", reply)
-    }
+    send_rpc(false, service, tag, data);
 }
 
 #[no_mangle]
 extern "C" fn rpc_send_async(service: u32, tag: &CSlice<u8>, data: *const *const ()) -> () {
-    let queue = unsafe { TO_WORKER_TX.as_mut().unwrap() };
-    queue
-        .send(KernelToWorker::RpcSend {
-            is_async: true,
-            service,
-            tag: unsafe { std::mem::transmute(tag.as_ref()) },
-            data,
-        })
-        .unwrap();
-    let rx_queue = unsafe { FROM_WORKER_RX.as_mut().unwrap() };
-    let reply = rx_queue.recv().unwrap();
-    if let WorkerToKernel::RpcSendAck = reply {
-        ()
-    } else {
-        panic!("expected RpcSendAck, not {:?}", reply)
-    }
+    send_rpc(true, service, tag, data);
 }
 
 fn listen_and_accept_worker() -> std::io::Result<TcpStream> {
@@ -322,24 +299,17 @@ pub unsafe fn main() -> std::io::Result<()> {
             .unwrap()
             .send(KernelToWorker::RunFinished)
             .unwrap();
-    })).unwrap();
+    }))
+    .unwrap();
 
     loop {
         eprintln!(" -- Waiting for message to worker");
         let to_worker = to_worker_rx.recv().unwrap();
         eprintln!(" -- Got message to worker: {:?}", to_worker);
         match to_worker {
-            KernelToWorker::RpcSend {
-                is_async,
-                service,
-                tag,
-                data,
-            } => {
-                host::Reply::RpcRequest { async: is_async }
-                    .write_to(&mut Worker {})
-                    .unwrap();
-                rpc::send_args(&mut Worker {}, service, tag, data, true).unwrap();
-                from_worker_tx.send(WorkerToKernel::RpcSendAck).unwrap();
+            KernelToWorker::RpcSend { is_async, buffer } => {
+                WORKER.as_ref().unwrap().write_all(&buffer).unwrap();
+
                 if is_async {
                     continue;
                 }
@@ -396,33 +366,47 @@ pub unsafe fn main() -> std::io::Result<()> {
                     if let KernelToWorker::RpcRecv(slot) = reply {
                         Ok(slot)
                     } else {
-                        panic!("expected nested value slot from kernel thread, not {:?}", msg)
+                        panic!(
+                            "expected nested value slot from kernel thread, not {:?}",
+                            msg
+                        )
                     }
                 })
                 .unwrap();
                 from_worker_tx.send(WorkerToKernel::RpcRecv(Ok(0))).unwrap();
-            },
+            }
             host::Request::RpcException {
-                id, message, param, file, line, column, function
+                id,
+                message,
+                param,
+                file,
+                line,
+                column,
+                function,
             } => {
                 let msg = to_worker_rx.recv().unwrap();
                 let _root_slot = if let KernelToWorker::RpcRecv(slot) = msg {
                     slot
                 } else {
-                    panic!("expected (ignored) root value slot from kernel thread, not {:?}", msg)
+                    panic!(
+                        "expected (ignored) root value slot from kernel thread, not {:?}",
+                        msg
+                    )
                 };
 
                 let exn = eh::eh_artiq::Exception {
-                    id:       id,
-                    message:  CSlice::new(message as *const u8, usize::MAX),
-                    param:    param,
-                    file:     CSlice::new(file as *const u8, usize::MAX),
-                    line:     line,
-                    column:   column,
+                    id: id,
+                    message: CSlice::new(message as *const u8, usize::MAX),
+                    param: param,
+                    file: CSlice::new(file as *const u8, usize::MAX),
+                    line: line,
+                    column: column,
                     function: CSlice::new(function as *const u8, usize::MAX),
                 };
-                from_worker_tx.send(WorkerToKernel::RpcRecv(Err(exn))).unwrap();
-            },
+                from_worker_tx
+                    .send(WorkerToKernel::RpcRecv(Err(exn)))
+                    .unwrap();
+            }
 
             _ => panic!("unexpected worker message: {:?}", request),
         }
