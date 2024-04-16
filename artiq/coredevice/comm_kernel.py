@@ -787,6 +787,7 @@ class CommKernelEmulation(CommKernel):
         self._process = subprocess.Popen(executable, stdout=subprocess.PIPE)
         expected_banner = b"ARTIQ kernel emulator, listening on: "
         banner = self._process.stdout.readline()
+        self._process.stdout.close()
 
         if (code := self._process.poll()) is not None:
             raise LoadError("Kernel process terminated prematurely " +
@@ -799,16 +800,15 @@ class CommKernelEmulation(CommKernel):
         self._configure_endian("<")
 
     def close(self):
-        if not self.is_open() or self._process is None:
-            return
-
         if hasattr(self, "socket"):
             self.socket.close()
             del self.socket
 
-        if (code := self._process.poll()) is not None:
-            logger.debug(f"Kernel process already terminated (exit code {code})")
-        else:
-            logger.debug("Waiting for kernel process to terminate...")
-            self._process.wait()
-            logger.debug(f"Kernel process terminated (exit code {self._process.returncode})")
+        if self._process is not None:
+            if (code := self._process.poll()) is not None:
+                logger.debug(f"Kernel process already terminated (exit code {code})")
+            else:
+                logger.debug("Waiting for kernel process to terminate...")
+                self._process.wait()
+                logger.debug(f"Kernel process terminated (exit code {self._process.returncode})")
+            self._process = None
