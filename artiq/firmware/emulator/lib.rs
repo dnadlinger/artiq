@@ -1,5 +1,4 @@
 #![feature(
-    libc,
     panic_unwind,
     unwind_attributes,
     rustc_private,
