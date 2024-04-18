@@ -55,7 +55,7 @@ mod cslice {
     }
 
     impl<'a, T> CSlice<'a, T> {
-        pub unsafe fn new(base: *const T, len: usize) -> Self {
+        pub unsafe fn new(base: *const T, len: u32) -> Self {
             assert!(base != std::ptr::null_mut());
             CSlice {
                 base: base,
@@ -64,8 +64,8 @@ mod cslice {
             }
         }
 
-        pub fn len(&self) -> usize {
-            self.len as usize
+        pub fn len(&self) -> u32 {
+            self.len as u32
         }
 
         pub fn as_ptr(&self) -> *const T {
@@ -236,12 +236,12 @@ extern "C" fn rpc_recv(slot: *mut ()) -> u32 {
             // marker for them to be treated as host-side strings.
             eh_artiq::raise(&eh_artiq::Exception {
                 id: exn.id,
-                message: CSlice::new(exn.message as *const u8, usize::MAX),
+                message: CSlice::new(exn.message as *const u8, u32::MAX),
                 param: exn.param,
-                file: CSlice::new(exn.file as *const u8, usize::MAX),
+                file: CSlice::new(exn.file as *const u8, u32::MAX),
                 line: exn.line,
                 column: exn.column,
-                function: CSlice::new(exn.function as *const u8, usize::MAX),
+                function: CSlice::new(exn.function as *const u8, u32::MAX),
             })
         },
         _ => panic!("expected RpcRecv, not {:?}", reply),

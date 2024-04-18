@@ -153,7 +153,7 @@ impl Request {
 fn write_exception_string<'a, W>(writer: &mut W, s: &CSlice<'a, u8>) -> Result<(), IoError<W::WriteError>>
     where W: Write + ?Sized
 {
-    if s.len() == usize::MAX {
+    if s.len() == u32::MAX {
         writer.write_u32(u32::MAX)?;
         writer.write_u32(s.as_ptr() as u32)?;
     } else {
@@ -201,13 +201,13 @@ impl<'a> Reply<'a> {
                 for exception in exceptions.iter() {
                     let exception = exception.as_ref().unwrap();
                     writer.write_u32(exception.id)?;
-                    if exception.message.len() == usize::MAX {
+                    if exception.message.len() == u32::MAX {
                         // exception with host string
                         write_exception_string(writer, &exception.message)?;
                     } else {
-                        let msg = str::from_utf8(unsafe { slice::from_raw_parts(exception.message.as_ptr(), exception.message.len()) }).unwrap()
+                        let msg = str::from_utf8(unsafe { slice::from_raw_parts(exception.message.as_ptr(), exception.message.len() as usize) }).unwrap()
                           .replace("{rtio_channel_info:0}", &format!("0x{:04x}:{}", exception.param[0], resolve_channel_name(exception.param[0] as u32)));
-                        write_exception_string(writer, unsafe { &CSlice::new(msg.as_ptr(), msg.len()) })?;
+                        write_exception_string(writer, unsafe { &CSlice::new(msg.as_ptr(), msg.len() as u32) })?;
                     }
                     writer.write_u64(exception.param[0] as u64)?;
                     writer.write_u64(exception.param[1] as u64)?;

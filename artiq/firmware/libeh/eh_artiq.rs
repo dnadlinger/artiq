@@ -20,7 +20,7 @@ fn str_err(_: core::str::Utf8Error) -> core::fmt::Error {
 }
 
 fn exception_str<'a>(s: &'a CSlice<'a, u8>) -> Result<&'a str, core::str::Utf8Error> {
-    if s.len() == usize::MAX {
+    if s.len() == u32::MAX {
         Ok("<host string>")
     } else {
         core::str::from_utf8(s.as_ref())

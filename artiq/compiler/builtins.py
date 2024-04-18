@@ -129,7 +129,7 @@ class TException(types.TMono):
     # These attributes are prefixed with `#` so that users cannot access them,
     # and we don't have to do string allocation in the runtime.
     # #__name__ is now a string key in the host. TStr may not be an actual
-    # CSlice in the runtime, they might be a CSlice with length = i32::MAX and
+    # CSlice in the runtime, they might be a CSlice with length = u32::MAX and
     # ptr = string key in the host.
 
     # Keep this in sync with the function ARTIQIRGenerator.alloc_exn.

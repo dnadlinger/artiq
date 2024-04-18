@@ -22,8 +22,8 @@ mod cslice {
     }
 
     impl<'a, T> CSlice<'a, T> {
-        pub fn len(&self) -> usize {
-            self.len as usize
+        pub fn len(&self) -> u32 {
+            self.len
         }
 
         pub fn as_ptr(&self) -> *const T {
