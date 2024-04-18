@@ -11,20 +11,47 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
+extern crate page_size;
+
+use std::cmp;
 use std::io;
 use std::mem;
 use std::ptr;
+
+const DEFAULT_MIN_STACK_SIZE: usize = 2 * 1024 * 1024;
 
 pub struct Thread {
     id: libc::pthread_t,
 }
 impl Thread {
     // unsafe: see thread::Builder::spawn_unchecked for safety requirements
-    pub unsafe fn new(p: Box<dyn FnOnce()>) -> io::Result<Thread> {
+    pub unsafe fn new(stack: usize, p: Box<dyn FnOnce()>) -> io::Result<Thread> {
         let p = Box::into_raw(Box::new(p));
         let mut native: libc::pthread_t = mem::zeroed();
 
-        let ret = libc::pthread_create(&mut native, ptr::null_mut(), thread_start, p as *mut _);
+        let mut attr: libc::pthread_attr_t = mem::zeroed();
+        assert_eq!(libc::pthread_attr_init(&mut attr), 0);
+        let stack_size = cmp::max(stack, DEFAULT_MIN_STACK_SIZE);
+        match libc::pthread_attr_setstacksize(&mut attr, stack_size) {
+            0 => {}
+            n => {
+                assert_eq!(n, libc::EINVAL);
+                // EINVAL means |stack_size| is either too small or not a
+                // multiple of the system page size. Because it's definitely
+                // >= PTHREAD_STACK_MIN, it must be an alignment issue.
+                // Round up to the nearest page and try again.
+                let page_size = page_size::get();
+                let stack_size =
+                    (stack_size + page_size - 1) & (-(page_size as isize - 1) as usize - 1);
+                assert_eq!(libc::pthread_attr_setstacksize(&mut attr, stack_size), 0);
+            }
+        };
+
+        let ret = libc::pthread_create(&mut native, &attr, thread_start, p as *mut _);
+        // Note: if the thread creation fails and this assert fails, then p will
+        // be leaked. However, an alternative design could cause double-free
+        // which is clearly worse.
+        assert_eq!(libc::pthread_attr_destroy(&mut attr), 0);
 
         return if ret != 0 {
             // The thread failed to start and as a result p was not consumed. Therefore, it is

@@ -310,7 +310,7 @@ pub unsafe fn main() -> std::io::Result<()> {
     // thread until the main thread exits. For this reason, we also need to directly
     // spawn an OS thread, as thread::spawn tries to catch panics to convert them into
     // a Result, which would also die in the attempt to catch a foreign exception.
-    bare_thread::Thread::new(Box::new(move || {
+    bare_thread::Thread::new(0, Box::new(move || {
         __modinit__();
         TO_WORKER_TX
             .as_ref()

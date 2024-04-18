@@ -15,6 +15,7 @@ unwind = { path = "../libunwind" }
 failure = { version = "0.1", default-features = false }
 failure_derive = { version = "0.1", default-features = false }
 log = { version = "0.4", default-features = false, optional = true }
+page_size = "0.6.0"
 
 [features]
 alloc = ["io/alloc"]
