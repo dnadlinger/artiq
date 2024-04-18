@@ -1,3 +1,4 @@
+use core::mem;
 use core::str;
 use core::slice;
 use cslice::{CSlice, CMutSlice};
@@ -147,7 +148,7 @@ unsafe fn recv_value<R, E>(reader: &mut R, tag: Tag, data: &mut *mut (),
                 // need to take into account any extra padding required.
                 // (Note: On RISC-V, there will never actually be any types with
                 // alignment larger than 8 bytes, so storage_offset == 0 always.)
-                let list_size = 4 + 4;
+                let list_size = mem::size_of::<* mut u8>() + mem::size_of::<u32>();
                 let storage_offset = round_up(list_size, tag.alignment());
                 let storage_size = tag.size() * length;
 
