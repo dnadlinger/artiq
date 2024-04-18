@@ -175,6 +175,12 @@ pub enum KernelToWorker<'a> {
         backtrace: &'a [(usize, usize)],
     },
 }
+// HACK: To use existing types such as eh::eh_artiq::Exception, just throw away type
+// system assurances about sharing. Will need to carefully validate threading
+// assumptions regarding the main kernel thread and comms thread, but in the first
+// instance, the synchronisation given by the message exchange seems like it should
+// be enough.
+unsafe impl<'a> Send for KernelToWorker<'a> {}
 
 #[derive(Debug)]
 struct HostException {
@@ -186,18 +192,11 @@ struct HostException {
     column: u32,
     function: u32,
 }
-
 #[derive(Debug)]
 enum WorkerToKernel {
     RpcRecv(Result<u32, HostException>),
     RpcFlush,
 }
-// HACK: To use existing types such as eh::eh_artiq::Exception, just throw away type
-// system assurances about sharing. Will need to carefully validate threading
-// assumptions regarding the main kernel thread and comms thread, but in the first
-// instance, the synchronisation given by the message exchange seems like it should
-// be enough.
-unsafe impl<'a> Send for KernelToWorker<'a> {}
 
 static mut TO_WORKER_TX: Option<mpsc::Sender<KernelToWorker>> = None;
 static mut FROM_WORKER_RX: Option<mpsc::Receiver<WorkerToKernel>> = None;
