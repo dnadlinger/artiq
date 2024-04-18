@@ -123,10 +123,10 @@ mod cslice {
         }
     }
 }
-
 use cslice::CSlice;
 use proto_artiq::rpc_proto as rpc;
 use proto_artiq::session_proto as host;
+use std::convert::TryInto;
 use std::io::{Read, Write};
 use std::net::{TcpListener, TcpStream};
 use std::sync::mpsc;
@@ -267,6 +267,16 @@ extern "C" fn rpc_send_async(service: u32, tag: &CSlice<u8>, data: *const *const
     send_rpc(true, service, tag, data);
 }
 
+static mut START_TIME: Option<std::time::Instant> = None;
+
+#[no_mangle]
+extern "C" fn rtio_init() {}
+
+#[no_mangle]
+extern "C" fn rtio_get_counter() -> i64 {
+    unsafe { START_TIME.as_ref().unwrap() }.elapsed().as_nanos().try_into().unwrap()
+}
+
 fn listen_and_accept_worker() -> std::io::Result<TcpStream> {
     let host = "127.0.0.1";
     let listener = TcpListener::bind(format!("{host}:0"))?;
@@ -298,6 +308,8 @@ pub unsafe fn main() -> std::io::Result<()> {
     TO_WORKER_TX = Some(to_worker_tx);
     let (from_worker_tx, from_worker_rx) = mpsc::channel();
     FROM_WORKER_RX = Some(from_worker_rx);
+
+    START_TIME = Some(std::time::Instant::now());
 
     // We need to run the kernel code and socket handling in separate threads to be able
     // to make use of the existing session_proto implementations, which use blocking
