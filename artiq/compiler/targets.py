@@ -274,7 +274,7 @@ class NativeTarget(Target):
         self.data_layout = str(llvm.targets.Target.from_default_triple().create_target_machine().target_data)
 
     tool_ld = "gcc"
-    linker_options = ["/home/dpn/scratch/artiq/artiq/firmware/emulator/libartiq_emulator.so"]
+    linker_options = ["-lm", "/home/dpn/scratch/artiq/artiq/firmware/emulator/libartiq_emulator.so"]
 
 
 class RV32IMATarget(Target):
