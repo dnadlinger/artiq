@@ -379,6 +379,10 @@ class CoreEmulator(Core):
                  ref_multiplier=8,
                  target=None,
                  satellite_cpu_targets=None):
+        if not libartiq_emulator_path:
+            raise ValueError("libartiq_emulator_path must be present and point to " +
+                             "artiq.firmware.emulator shared library, not" +
+                             f"'{libartiq_emulator_path}'")
         if analyze_at_run_end:
             raise NotImplementedError(
                 "Core analyzer not yet supported in emulator")
