@@ -16,7 +16,7 @@ from artiq.compiler.targets import CortexA9Target
 
 
 artiq_low_latency = os.getenv("ARTIQ_LOW_LATENCY")
-artiq_in_devel = os.getenv("ARTIQ_IN_DEVEL")
+artiq_in_emulator = os.getenv("ARTIQ_IN_EMULATOR")
 
 
 class RTIOCounter(EnvExperiment):
@@ -500,6 +500,8 @@ class CoredeviceTest(ExperimentCase):
             self.execute(Underflow)
 
     def execute_and_test_in_log(self, experiment, string):
+        if artiq_in_emulator:
+            self.skipTest("core log not supported in emulator yet")
         core_addr = self.device_mgr.get_desc("core")["arguments"]["host"]
         mgmt = CommMgmt(core_addr)
         mgmt.clear_log()
@@ -517,6 +519,7 @@ class CoredeviceTest(ExperimentCase):
     def test_address_collision(self):
         self.execute_and_test_in_log(AddressCollision, "RTIO collision")
 
+    @unittest.skipIf(artiq_in_emulator, "handover not supported in emulator yet")
     def test_time_keeps_running(self):
         self.execute(TimeKeepsRunning)
         t1 = self.dataset_mgr.get("time_at_start")
@@ -528,11 +531,13 @@ class CoredeviceTest(ExperimentCase):
         self.assertGreater(dead_time, 1*ms)
         self.assertLess(dead_time, 2500*ms)
 
+    @unittest.skipIf(artiq_in_emulator, "handover not supported in emulator yet")
     def test_handover(self):
         self.execute(Handover)
         self.assertEqual(self.dataset_mgr.get("t1") + 1234,
                          self.dataset_mgr.get("t2"))
 
+    @unittest.skipIf(artiq_in_emulator, "handover not supported in emulator yet")
     def test_handover_exception(self):
         self.execute(HandoverException)
         self.assertEqual(self.dataset_mgr.get("t1") + 1234,

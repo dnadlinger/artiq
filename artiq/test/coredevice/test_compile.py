@@ -9,6 +9,7 @@ from artiq.experiment import *
 
 
 artiq_root = os.getenv("ARTIQ_ROOT")
+artiq_in_emulator = os.getenv("ARTIQ_IN_EMULATOR")
 
 
 class CheckLog(EnvExperiment):
@@ -43,6 +44,7 @@ class _Precompile(EnvExperiment):
 
 
 class TestCompile(ExperimentCase):
+    @unittest.skipIf(artiq_in_emulator, "core log not supported in emulator yet")
     def test_compile(self):
         core_addr = self.device_mgr.get_desc("core")["arguments"]["host"]
         mgmt = CommMgmt(core_addr)

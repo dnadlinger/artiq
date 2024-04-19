@@ -1,8 +1,12 @@
+import os, unittest
+
 from artiq.experiment import *
 from artiq.coredevice.comm_analyzer import (decode_dump, StoppedMessage,
                                             OutputMessage, InputMessage,
                                            _extract_log_chars, get_analyzer_dump)
 from artiq.test.hardware_testbench import ExperimentCase
+
+artiq_in_emulator = os.getenv("ARTIQ_IN_EMULATOR")
 
 
 class CreateTTLPulse(EnvExperiment):
@@ -39,6 +43,7 @@ class WriteLog(EnvExperiment):
         rtio_log("foo", 32)
 
 
+@unittest.skipIf(artiq_in_emulator, "RTIO analyzer not supported in emulator yet")
 class AnalyzerTest(ExperimentCase):
     def test_ttl_pulse(self):
         core_host = self.device_mgr.get_desc("core")["arguments"]["host"]
