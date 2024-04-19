@@ -1,10 +1,11 @@
 #![feature(
-    panic_unwind,
-    unwind_attributes,
-    rustc_private,
-    int_bits_const,
     const_in_array_repeat_expressions,
-    format_args_capture
+    format_args_capture,
+    int_bits_const,
+    linkage,
+    panic_unwind,
+    rustc_private,
+    unwind_attributes,
 )]
 #![crate_name = "artiq_emulator"]
 #![crate_type = "cdylib"]
@@ -31,6 +32,8 @@ pub mod eh {
 #[path = "../ksupport/eh_artiq.rs"]
 pub mod eh_artiq;
 
+#[path = "../ksupport/attribute_writeback.rs"]
+mod attribute_writeback;
 #[path = "."]
 pub mod proto_artiq {
     #[path = "../libproto_artiq/rpc_proto.rs"]
@@ -123,6 +126,7 @@ mod cslice {
         }
     }
 }
+
 use cslice::CSlice;
 use proto_artiq::rpc_proto as rpc;
 use proto_artiq::session_proto as host;
@@ -195,7 +199,6 @@ struct HostException {
 #[derive(Debug)]
 enum WorkerToKernel {
     RpcRecv(Result<u32, HostException>),
-    RpcFlush,
 }
 
 static mut TO_WORKER_TX: Option<mpsc::Sender<KernelToWorker>> = None;
@@ -242,7 +245,6 @@ extern "C" fn rpc_recv(slot: *mut ()) -> u32 {
                 function: CSlice::new(exn.function as *const u8, u32::MAX),
             })
         },
-        _ => panic!("expected RpcRecv, not {:?}", reply),
     }
 }
 
@@ -290,6 +292,12 @@ fn listen_and_accept_worker() -> std::io::Result<TcpStream> {
     Ok(socket)
 }
 
+extern {
+    #[linkage = "extern_weak"]
+    #[link_name = "typeinfo"]
+    static TYPEINFO: *const u8;
+}
+
 #[no_mangle]
 pub unsafe fn main() -> std::io::Result<()> {
     let mut worker = Worker {
@@ -324,6 +332,9 @@ pub unsafe fn main() -> std::io::Result<()> {
     // a Result, which would also die in the attempt to catch a foreign exception.
     bare_thread::Thread::new(0, Box::new(move || {
         __modinit__();
+        if !TYPEINFO.is_null() {
+            attribute_writeback::send_async_rpcs(TYPEINFO as *const ());
+        }
         TO_WORKER_TX
             .as_ref()
             .unwrap()
@@ -339,7 +350,6 @@ pub unsafe fn main() -> std::io::Result<()> {
         match to_worker {
             KernelToWorker::RpcSend { is_async, buffer } => {
                 worker.0.write_all(&buffer).unwrap();
-
                 if is_async {
                     continue;
                 }

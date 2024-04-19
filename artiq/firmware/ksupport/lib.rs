@@ -98,6 +98,7 @@ macro_rules! raise {
     });
 }
 
+mod attribute_writeback;
 mod eh_artiq;
 mod api;
 mod rtio;
@@ -552,45 +553,6 @@ extern fn subkernel_await_message(id: i32, timeout: i64, tags: &CSlice<u8>, min:
     // RpcRecvRequest should be called `count` times after this to receive message data
 }
 
-unsafe fn attribute_writeback(typeinfo: *const ()) {
-    struct Attr {
-        offset: usize,
-        tag:    CSlice<'static, u8>,
-        name:   CSlice<'static, u8>
-    }
-
-    struct Type {
-        attributes: *const *const Attr,
-        objects:    *const *const ()
-    }
-
-    let mut tys = typeinfo as *const *const Type;
-    while !(*tys).is_null() {
-        let ty = *tys;
-        tys = tys.offset(1);
-
-        let mut objects = (*ty).objects;
-        while !(*objects).is_null() {
-            let object = *objects;
-            objects = objects.offset(1);
-
-            let mut attributes = (*ty).attributes;
-            while !(*attributes).is_null() {
-                let attribute = *attributes;
-                attributes = attributes.offset(1);
-
-                if (*attribute).tag.len() > 0 {
-                    rpc_send_async(0, &(*attribute).tag, [
-                        &object as *const _ as *const (),
-                        &(*attribute).name as *const _ as *const (),
-                        (object as usize + (*attribute).offset) as *const ()
-                    ].as_ptr());
-                }
-            }
-        }
-    }
-}
-
 static mut STACK_GUARD_BASE: usize = 0x0;
 
 #[no_mangle]
@@ -631,7 +593,7 @@ pub unsafe fn main() {
     (mem::transmute::<u32, fn()>(__modinit__))();
 
     if let Some(typeinfo) = typeinfo {
-        attribute_writeback(typeinfo as *const ());
+        attribute_writeback::send_async_rpcs(typeinfo as *const ());
     }
 
     // Make sure all async RPCs are processed before exiting.
