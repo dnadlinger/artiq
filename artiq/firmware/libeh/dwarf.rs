@@ -12,11 +12,10 @@
 #![allow(unused)]
 
 use core::mem;
-use cslice::CSlice;
 
 pub const DW_EH_PE_omit: u8 = 0xFF;
-pub const DW_EH_PE_absptr: u8 = 0x00;
 
+pub const DW_EH_PE_ptr: u8 = 0x00;
 pub const DW_EH_PE_uleb128: u8 = 0x01;
 pub const DW_EH_PE_udata2: u8 = 0x02;
 pub const DW_EH_PE_udata4: u8 = 0x03;
@@ -25,12 +24,15 @@ pub const DW_EH_PE_sleb128: u8 = 0x09;
 pub const DW_EH_PE_sdata2: u8 = 0x0A;
 pub const DW_EH_PE_sdata4: u8 = 0x0B;
 pub const DW_EH_PE_sdata8: u8 = 0x0C;
+pub const DW_EH_PE_FORMAT_MASK: u8 = 0x0F;
 
+pub const DW_EH_PE_absptr: u8 = 0x00;
 pub const DW_EH_PE_pcrel: u8 = 0x10;
 pub const DW_EH_PE_textrel: u8 = 0x20;
 pub const DW_EH_PE_datarel: u8 = 0x30;
 pub const DW_EH_PE_funcrel: u8 = 0x40;
 pub const DW_EH_PE_aligned: u8 = 0x50;
+pub const DW_EH_PE_APPL_MASK: u8 = 0x70;
 
 pub const DW_EH_PE_indirect: u8 = 0x80;
 
@@ -129,8 +131,8 @@ unsafe fn read_encoded_pointer_with_base(
         return Ok(reader.read::<usize>());
     }
 
-    let mut result = match encoding & 0x0F {
-        DW_EH_PE_absptr => reader.read::<usize>(),
+    let mut result = match encoding & DW_EH_PE_FORMAT_MASK {
+        DW_EH_PE_ptr => reader.read::<usize>(),
         DW_EH_PE_uleb128 => reader.read_uleb128() as usize,
         DW_EH_PE_udata2 => reader.read::<u16>() as usize,
         DW_EH_PE_udata4 => reader.read::<u32>() as usize,
@@ -148,10 +150,14 @@ unsafe fn read_encoded_pointer_with_base(
         return Ok(0);
     }
 
-    result += if (encoding & 0x70) == DW_EH_PE_pcrel {
-        original_ptr as usize
-    } else {
-        base
+    result += match encoding & DW_EH_PE_APPL_MASK {
+        DW_EH_PE_absptr => base,
+        DW_EH_PE_pcrel => {
+            // Despite the name, for EH tables this means it is relative to the
+            // address of the encoded value.
+            original_ptr as usize
+        },
+        _ => return Err(()),
     };
 
     if encoding & DW_EH_PE_indirect != 0 {
@@ -175,9 +181,10 @@ fn size_of_encoded_value(encoding: u8) -> usize {
     if encoding == DW_EH_PE_omit {
         0
     } else {
-        let encoding = encoding & 0x07;
+        // Only take the lower 3 bits of the format to ignore the sign.
+        let encoding = encoding & 0x7;
         match encoding {
-            DW_EH_PE_absptr => core::mem::size_of::<*const ()>(),
+            DW_EH_PE_ptr => core::mem::size_of::<*const ()>(),
             DW_EH_PE_udata2 => 2,
             DW_EH_PE_udata4 => 4,
             DW_EH_PE_udata8 => 8,
@@ -191,18 +198,14 @@ unsafe fn get_ttype_entry(
     encoding: u8,
     ttype_base: usize,
     ttype: *const u8,
-) -> Result<*const u8, ()> {
+) -> Result<*const u32, ()> {
     let i = (offset * size_of_encoded_value(encoding)) as isize;
     read_encoded_pointer_with_base(
         &mut DwarfReader::new(ttype.offset(-i)),
-        // the DW_EH_PE_pcrel is a hack.
-        // It seems that the default encoding is absolute, but we have to take reallocation into
-        // account. Unsure if we can fix this in the compiler setting or if this would be affected
-        // by updating the compiler
         encoding,
         ttype_base,
     )
-    .map(|v| v as *const u8)
+    .map(|v| v as *const u32)
 }
 
 pub unsafe fn find_eh_action(
@@ -226,7 +229,8 @@ pub unsafe fn find_eh_action(
     };
 
     let ttype_encoding = reader.read::<u8>();
-    // we do care about the type table
+    // In contrast to Rust, which does have panic "types", we do match exception types
+    // stored in the type table.
     let ttype_offset = if ttype_encoding != DW_EH_PE_omit {
         reader.read_uleb128()
     } else {
@@ -276,17 +280,24 @@ pub unsafe fn find_eh_action(
                                 ttype_base,
                                 ttype_table,
                             )?;
-                            if (catch_type as *const CSlice<u8>).is_null() {
+                            // catch_type is now the argument we passed to the LLVM IR
+                            // landingpad catch clause, so the interpretation depends
+                            // on our codegen.
+                            if catch_type.is_null() {
+                                // null indicates an unconditional except block.
                                 return Ok(EHAction::Catch(lpad));
                             }
-                            // this seems to be target dependent
+                            // Load our exception type id from the exn.… global.
                             let clause_id = *(catch_type as *const u32);
                             if clause_id == id {
                                 return Ok(EHAction::Catch(lpad));
                             }
                         } else if ar_filter < 0 {
-                            // FIXME: how to handle this?
-                            break;
+                            // We do not ever emit, using LLVM terminology, landingpad
+                            // filter clauses (such as used to implement pre-C++17
+                            // exception specifications), so this has to be some kind of
+                            // corruption and the best we can do is terminate immediately.
+                            return Ok(EHAction::Terminate);
                         }
                         if ar_disp == 0 {
                             break;
@@ -357,4 +368,3 @@ fn get_base(encoding: u8, context: &EHContext<'_>) -> Result<usize, ()> {
         _ => return Err(()),
     }
 }
-
