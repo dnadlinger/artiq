@@ -16,7 +16,7 @@ from artiq.compiler.embedding import Stitcher
 from artiq.compiler.targets import (RV32IMATarget, RV32GTarget, CortexA9Target,
                                     NativeTarget)
 
-from artiq.coredevice.comm_kernel import (CommKernel, CommKernelDummy, 
+from artiq.coredevice.comm_kernel import (CommKernel, CommKernelDummy,
                                           CommKernelEmulation)
 # Import for side effects (creating the exception classes).
 from artiq.coredevice import exceptions
@@ -67,6 +67,9 @@ def get_target_cls(target):
         raise ValueError("Unsupported target")
 
 
+EMULATOR_DUMMY_HOST = "<emulate-local>"
+
+
 class Core:
     """Core device driver.
 
@@ -102,9 +105,8 @@ class Core:
         self.coarse_ref_period = ref_period*ref_multiplier
         if host is None:
             self.comm = CommKernelDummy()
-        elif host == "<emulate-local>":
+        elif host == EMULATOR_DUMMY_HOST:
             self.comm = CommKernelEmulation()
-            self.target_cls = NativeTarget
         else:
             self.comm = CommKernel(host)
         self.analyzer_proxy_name = analyzer_proxy
@@ -185,7 +187,7 @@ class Core:
         target = get_target_cls(destination_tgt)(subkernel_id=sid)
         object_map, kernel_library, _, _, _ = \
             self.compile(subkernel_fn, self_arg, {}, attribute_writeback=False,
-                        print_as_rpc=False, target=target, destination=destination, 
+                        print_as_rpc=False, target=target, destination=destination,
                         subkernel_arg_types=subkernel_arg_types.get(sid, []),
                         old_embedding_map=embedding_map)
         if object_map.has_rpc():
@@ -359,3 +361,37 @@ class Core:
             raise IOError("No analyzer proxy configured")
         else:
             self.analyzer_proxy.trigger()
+
+
+class CoreEmulator(Core):
+    """Drop-in replacement for :class:`Core` that compiles and runs kernels on the host
+    CPU instead for testing purposes.
+
+    :param libartiq_emulator_path: Path to the ARTIQ emulator library (Linux:
+        ``libartiq_emulator.so``); added to the linker command line.
+    """
+    def __init__(self,
+                 dmgr,
+                 libartiq_emulator_path: str,
+                 ref_period,
+                 analyzer_proxy=None,
+                 analyze_at_run_end=False,
+                 ref_multiplier=8,
+                 target=None,
+                 satellite_cpu_targets=None):
+        if analyze_at_run_end:
+            raise NotImplementedError(
+                "Core analyzer not yet supported in emulator")
+        if target is not None:
+            raise NotImplementedError(
+                "Emulator always targets master host CPU")
+        if satellite_cpu_targets is not None:
+            raise NotImplementedError(
+                "Satellite kernels not yet supported in emulator")
+        super().__init__(dmgr=dmgr,
+                         host=EMULATOR_DUMMY_HOST,
+                         ref_period=ref_period,
+                         ref_multiplier=ref_multiplier)
+        class NativeTargetWithEmulator(NativeTarget):
+            linker_options = NativeTarget.linker_options + [libartiq_emulator_path]
+        self.target_cls = NativeTargetWithEmulator

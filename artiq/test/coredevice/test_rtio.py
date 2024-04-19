@@ -679,6 +679,8 @@ class DMATest(ExperimentCase):
         with self.assertRaises(exceptions.DMAError):
             exp.nested()
 
+    # If artiq_in_emulator, the "host" argument does not exist
+    @unittest.skipIf(artiq_in_emulator, "core analyzer not supported in emulator yet")
     def test_dma_trace(self):
         core_host = self.device_mgr.get_desc("core")["arguments"]["host"]
 
