@@ -142,6 +142,12 @@ unsafe fn read_encoded_pointer_with_base(
         _ => return Err(()),
     };
 
+    if result == 0 {
+        // null is just encoded as such even if a relative encoding is used for the
+        // table otherwise (e.g. in catch type info tables on x86_64).
+        return Ok(0);
+    }
+
     result += if (encoding & 0x70) == DW_EH_PE_pcrel {
         original_ptr as usize
     } else {
