@@ -110,6 +110,23 @@
         '';
       };
 
+      libartiq-emulator = rustPlatform.buildRustPackage rec {
+        name = "libartiq-emulator";
+        src = self;
+        buildAndTestSubdir = "artiq/firmware/emulator";
+        cargoLock = cargoLockConfig;
+        postPatch = ''
+          ln -s ${cargoLock.lockFile} Cargo.lock
+        '';
+
+        # `cargo test` runs into trouble because of our defining main() in a library.
+        doCheck = false;
+
+        # debug mode mostly to avoid buildRustPackage using `--profile release`, which
+        # is not yet stable on the Rust version we are using.
+        buildType = "debug";
+      };
+
       llvmlite-new = pkgs.python3Packages.buildPythonPackage rec {
         pname = "llvmlite";
         version = "0.40.1";
@@ -171,9 +188,12 @@
         # FIXME: automatically propagate lld_14 llvm_14 dependencies
         # cacert is required in the check stage only, as certificates are to be
         # obtained from system elsewhere
-        nativeCheckInputs = with pkgs; [ lld_14 llvm_14 lit outputcheck cacert ] ++ [ libartiq-support ];
+        nativeCheckInputs = with pkgs; [ lld_14 llvm_14 lit outputcheck cacert ] ++ [ libartiq-emulator libartiq-support ];
         checkPhase = ''
-          python -m unittest discover -v artiq.test
+          ARTIQ_IN_EMULATOR=1 \
+            LIBARTIQ_EMULATOR=${libartiq-emulator}/lib/libartiq_emulator.so \
+            ARTIQ_ROOT=$src/artiq/test/emulator_root \
+            python -m unittest discover -v artiq.test
 
           TESTDIR=`mktemp -d`
           cp --no-preserve=mode,ownership -R $src/artiq/test/lit $TESTDIR
@@ -236,17 +256,19 @@
         runScript = "vivado";
       };
 
+      cargoLockConfig = {
+        lockFile = ./artiq/firmware/Cargo.lock;
+        outputHashes = {
+          "fringe-1.2.1" = "sha256-m4rzttWXRlwx53LWYpaKuU5AZe4GSkbjHS6oINt5d3Y=";
+          "tar-no-std-0.1.8" = "sha256-xm17108v4smXOqxdLvHl9CxTCJslmeogjm4Y87IXFuM=";
+        };
+      };
+
       makeArtiqBoardPackage = { target, variant, buildCommand ? "python -m artiq.gateware.targets.${target} -V ${variant}", experimentalFeatures ? [] }:
         pkgs.stdenv.mkDerivation {
           name = "artiq-board-${target}-${variant}";
           phases = [ "buildPhase" "checkPhase" "installPhase" ];
-          cargoDeps = rustPlatform.importCargoLock {
-            lockFile = ./artiq/firmware/Cargo.lock;
-            outputHashes = {
-              "fringe-1.2.1" = "sha256-m4rzttWXRlwx53LWYpaKuU5AZe4GSkbjHS6oINt5d3Y=";
-              "tar-no-std-0.1.8" = "sha256-xm17108v4smXOqxdLvHl9CxTCJslmeogjm4Y87IXFuM=";
-            };
-          };
+          cargoDeps = rustPlatform.importCargoLock cargoLockConfig;
           nativeBuildInputs = [
             (pkgs.python3.withPackages(ps: [ migen misoc (artiq.withExperimentalFeatures experimentalFeatures) ps.packaging ]))
             rust
@@ -434,6 +456,7 @@
           # To manually run compiler tests:
           pkgs.lit
           pkgs.outputcheck
+          libartiq-emulator
           libartiq-support
           # use the vivado-env command to enter a FHS shell that lets you run the Vivado installer
           packages.x86_64-linux.vivadoEnv
@@ -443,6 +466,7 @@
           pkgs.python3Packages.sphinx-argparse pkgs.python3Packages.sphinxcontrib-wavedrom latex-artiq-manual
         ];
         shellHook = ''
+          export LIBARTIQ_EMULATOR=${libartiq-emulator}/lib/libartiq_emulator.so
           export LIBARTIQ_SUPPORT=`libartiq-support`
           export QT_PLUGIN_PATH=${pkgs.qt5.qtbase}/${pkgs.qt5.qtbase.dev.qtPluginPrefix}:${pkgs.qt5.qtsvg.bin}/${pkgs.qt5.qtbase.dev.qtPluginPrefix}
           export QML2_IMPORT_PATH=${pkgs.qt5.qtbase}/${pkgs.qt5.qtbase.dev.qtQmlPrefix}
