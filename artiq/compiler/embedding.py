@@ -56,7 +56,13 @@ class EmbeddingMap:
         self.used_instance_type_names = set()
         self.used_constructor_type_names = set()
 
+        # function_map connects the host Python `function`/SpecializedFunction to
+        # its mangled name, where used_function_names keeps track of the used
+        # names for O(1) collision avoidance (possible for instance functions
+        # stored as a bound function rather than accessed via an instance).
         self.function_map = {}
+        self.used_function_names = set()
+
         self.str_forward_map = {}
         self.str_reverse_map = {}
 
@@ -160,8 +166,31 @@ class EmbeddingMap:
         return count
 
     # Functions
-    def store_function(self, function, ir_function_name):
-        self.function_map[function] = ir_function_name
+    def store_function(self, function, name) -> str:
+        # Mangle the name, since we put everything into a single module.
+        if isinstance(function, SpecializedFunction):
+            instance_type = function.instance_type
+            mangled = "_Z{}{}I{}{}Ezz".format(
+                len(name), name, len(instance_type.name), instance_type.name)
+            assert mangled not in self.used_function_names, \
+                f"Instance function names should not collide, but did for '{mangled}'"
+        else:
+            # In much the same way as for types in store_type(), multiple functions
+            # can have exactly the same __qualname__ if e.g. defined within a factory
+            # function. The embedding/type systems handle this just fine; we just need
+            # to make sure to pick unique names for the LLVM globals
+            # (_Z3foozz, _Z5foo.1zz, _Z5foo.2zz, etc.).
+            new_name = name
+            suffix = 0
+            while True:
+                mangled = "_Z{}{}zz".format(len(new_name), new_name)
+                if mangled not in self.used_function_names:
+                    break
+                suffix += 1
+                new_name = f"{name}.{suffix}"
+        self.function_map[function] = mangled
+        self.used_function_names.add(mangled)
+        return mangled
 
     def retrieve_function(self, function):
         return self.function_map[function]
@@ -1120,18 +1149,11 @@ class Stitcher:
         parser = source_parser.Parser(lexer, version=(3, 6), diagnostic_engine=self.engine)
         function_node = parser.file_input().body[0]
 
-        # Mangle the name, since we put everything into a single module.
-        full_function_name = "{}.{}".format(module_name, host_function.__qualname__)
-        if isinstance(function, SpecializedFunction):
-            instance_type = function.instance_type
-            function_node.name = "_Z{}{}I{}{}Ezz".format(len(full_function_name), full_function_name,
-                                                         len(instance_type.name), instance_type.name)
-        else:
-            function_node.name = "_Z{}{}zz".format(len(full_function_name), full_function_name)
-
         # Record the function in the function map so that LLVM IR generator
-        # can handle quoting it.
-        self.embedding_map.store_function(function, function_node.name)
+        # can handle quoting it; mangling it since we put everything into a
+        # single module.
+        full_function_name = "{}.{}".format(module_name, host_function.__qualname__)
+        function_node.name = self.embedding_map.store_function(function, full_function_name)
 
         # Fill in the function type before typing it to handle recursive
         # invocations.
