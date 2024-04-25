@@ -9,6 +9,7 @@ import enum
 import typing
 import os, re, linecache, inspect, textwrap, types as pytypes, numpy
 from collections import OrderedDict, defaultdict
+from dataclasses import dataclass
 
 from pythonparser import ast, algorithm, source, diagnostic, parse_buffer
 from pythonparser import lexer as source_lexer, parser as source_parser
@@ -28,24 +29,10 @@ except ImportError:
     _ArrayFunctionDispatcher = None    
 
 
+@dataclass(frozen=True)
 class SpecializedFunction:
-    def __init__(self, instance_type, host_function):
-        self.instance_type = instance_type
-        self.host_function = host_function
-
-    def __eq__(self, other):
-        if isinstance(other, tuple):
-            return (self.instance_type == other[0] or
-                    self.host_function == other[1])
-        else:
-            return (self.instance_type == other.instance_type or
-                    self.host_function == other.host_function)
-
-    def __ne__(self, other):
-        return not self == other
-
-    def __hash__(self):
-        return hash((self.instance_type, self.host_function))
+    instance_type: types.TInstance
+    host_function: pytypes.FunctionType
 
 
 class SubkernelMessageType:
