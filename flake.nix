@@ -378,8 +378,9 @@
         done
         '';
     in rec {
+      nixpkgs = pkgs;
       packages.x86_64-linux = {
-        inherit pythonparser qasync artiq;
+        inherit pythonparser qasync artiq libartiq-emulator;
         inherit migen misoc asyncserial microscope vivadoEnv vivado;
         openocd-bscanspi = openocd-bscanspi-f pkgs;
         artiq-board-kc705-nist_clock = makeArtiqBoardPackage {
